@@ -730,6 +730,20 @@ malloc_ncpus(void) {
 	SYSTEM_INFO si;
 	GetSystemInfo(&si);
 	result = si.dwNumberOfProcessors;
+#elif defined(JEMALLOC_GLIBC_MALLOC_HOOK) && defined(CPU_COUNT)
+	/*
+	 * glibc >= 2.6 has the CPU_COUNT macro.
+	 *
+	 * glibc's sysconf() uses isspace().  glibc allocates for the first time
+	 * *before* setting up the isspace tables.  Therefore we need a
+	 * different method to get the number of CPUs.
+	 */
+	{
+		cpu_set_t set;
+
+		pthread_getaffinity_np(pthread_self(), sizeof(set), &set);
+		result = CPU_COUNT(&set);
+	}
 #else
 	result = sysconf(_SC_NPROCESSORS_ONLN);
 #endif
