@@ -7,6 +7,8 @@
 #include "jemalloc/internal/ehooks.h"
 #include "jemalloc/internal/edata_cache.h"
 
+#include "jemalloc/internal/clickhouse.h"
+
 static bool
 san_bump_grow_locked(tsdn_t *tsdn, san_bump_alloc_t *sba, pac_t *pac,
     ehooks_t *ehooks, size_t size);
@@ -28,6 +30,11 @@ san_bump_alloc(tsdn_t *tsdn, san_bump_alloc_t* sba, pac_t *pac,
 		 * try replacing it with a larger one and destroy current if the
 		 * replacement succeeds.
 		 */
+
+		if (je_clickhouse_tls.do_not_increase_rss) {
+			goto label_err;
+		}
+
 		to_destroy = sba->curr_reg;
 		bool err = san_bump_grow_locked(tsdn, sba, pac, ehooks,
 		    guarded_size);

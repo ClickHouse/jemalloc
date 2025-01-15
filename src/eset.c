@@ -3,6 +3,8 @@
 
 #include "jemalloc/internal/eset.h"
 
+#include "jemalloc/internal/clickhouse.h"
+
 #define ESET_NPSIZES (SC_NPSIZES + 1)
 
 static void
@@ -108,6 +110,14 @@ eset_insert(eset_t *eset, edata_t *edata) {
 	    atomic_load_zu(&eset->npages, ATOMIC_RELAXED);
 	atomic_store_zu(&eset->npages, cur_eset_npages + npages,
 	    ATOMIC_RELAXED);
+
+	if (eset->state == extent_state_dirty) {
+		if (je_clickhouse_tls.use_thread_local_stats) {
+			je_clickhouse_tls.dirty_bytes_delta += (int64_t)(npages << LG_PAGE);
+		} else {
+			atomic_fetch_add_zd(&je_clickhouse_resident_bytes, (int64_t)(npages << LG_PAGE), ATOMIC_RELAXED);
+		}
+	}
 }
 
 void
@@ -153,6 +163,14 @@ eset_remove(eset_t *eset, edata_t *edata) {
 	assert(cur_extents_npages >= npages);
 	atomic_store_zu(&eset->npages,
 	    cur_extents_npages - (size >> LG_PAGE), ATOMIC_RELAXED);
+
+	if (eset->state == extent_state_dirty) {
+		if (je_clickhouse_tls.use_thread_local_stats) {
+			je_clickhouse_tls.dirty_bytes_delta -= (int64_t)(npages << LG_PAGE);
+		} else {
+			atomic_fetch_sub_zd(&je_clickhouse_resident_bytes, (int64_t)(npages << LG_PAGE), ATOMIC_RELAXED);
+		}
+	}
 }
 
 /*

@@ -53,6 +53,7 @@ struct eset_s {
 	/*
 	 * A duplication of the data in the containing ecache.  We use this only
 	 * for assertions on the states of the passed-in extents.
+	 * [Clickhouse fork] We also use it for maintaining dirty page counter.
 	 */
 	extent_state_t state;
 };

@@ -1860,6 +1860,18 @@ malloc_init_hard_a0_locked() {
 			opt_hpa = false;
 		}
 	}
+	if (opt_hpa) {
+		/* See clickhouse.h */
+#ifdef NDEBUG
+		malloc_printf("<jemalloc>: HPA is not supported by clickhouse memory tracking extension; "
+			"memory tracking will be inaccurate");
+		opt_hpa = false;
+#else
+		malloc_printf("<jemalloc>: HPA is not supported by clickhouse memory tracking extension; "
+			"please disable the 'hpa' option; aborting");
+		abort();
+#endif
+	}
 	if (arena_boot(&sc_data, b0get(), opt_hpa)) {
 		return true;
 	}

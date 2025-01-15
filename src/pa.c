@@ -4,15 +4,31 @@
 #include "jemalloc/internal/san.h"
 #include "jemalloc/internal/hpa.h"
 
+#include "jemalloc/internal/clickhouse.h"
+
 static void
 pa_nactive_add(pa_shard_t *shard, size_t add_pages) {
 	atomic_fetch_add_zu(&shard->nactive, add_pages, ATOMIC_RELAXED);
+
+	if (je_clickhouse_tls.use_thread_local_stats) {
+		je_clickhouse_tls.active_bytes_delta += (int64_t)(add_pages << LG_PAGE);
+	} else {
+		atomic_fetch_add_zd(&je_clickhouse_resident_bytes, (int64_t)(add_pages << LG_PAGE), ATOMIC_RELAXED);
+		atomic_fetch_add_zd(&je_clickhouse_active_bytes, (int64_t)(add_pages << LG_PAGE), ATOMIC_RELAXED);
+	}
 }
 
 static void
 pa_nactive_sub(pa_shard_t *shard, size_t sub_pages) {
 	assert(atomic_load_zu(&shard->nactive, ATOMIC_RELAXED) >= sub_pages);
 	atomic_fetch_sub_zu(&shard->nactive, sub_pages, ATOMIC_RELAXED);
+
+	if (je_clickhouse_tls.use_thread_local_stats) {
+		je_clickhouse_tls.active_bytes_delta -= (int64_t)(sub_pages << LG_PAGE);
+	} else {
+		atomic_fetch_sub_zd(&je_clickhouse_resident_bytes, (int64_t)(sub_pages << LG_PAGE), ATOMIC_RELAXED);
+		atomic_fetch_sub_zd(&je_clickhouse_active_bytes, (int64_t)(sub_pages << LG_PAGE), ATOMIC_RELAXED);
+	}
 }
 
 bool
