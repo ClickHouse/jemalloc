@@ -4,6 +4,8 @@
 #include "jemalloc/internal/pac.h"
 #include "jemalloc/internal/san.h"
 
+#include "jemalloc/internal/clickhouse.h"
+
 static edata_t *pac_alloc_impl(tsdn_t *tsdn, pai_t *self, size_t size,
     size_t alignment, bool zero, bool guarded, bool frequent_reuse,
     bool *deferred_work_generated);
@@ -116,6 +118,11 @@ pac_alloc_real(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks, size_t size,
 	edata_t *edata = ecache_alloc(tsdn, pac, ehooks, &pac->ecache_dirty,
 	    NULL, size, alignment, zero, guarded);
 
+	if (edata == NULL && je_clickhouse_tls.do_not_increase_rss) {
+		/// Refuse allocation if it can't be served using only dirty pages.
+		return NULL;
+	}
+
 	if (edata == NULL && pac_may_have_muzzy(pac)) {
 		edata = ecache_alloc(tsdn, pac, ehooks, &pac->ecache_muzzy,
 		    NULL, size, alignment, zero, guarded);
@@ -201,6 +208,12 @@ pac_expand_impl(tsdn_t *tsdn, pai_t *self, edata_t *edata, size_t old_size,
 	}
 	edata_t *trail = ecache_alloc(tsdn, pac, ehooks, &pac->ecache_dirty,
 	    edata, expand_amount, PAGE, zero, /* guarded*/ false);
+
+	if (trail == NULL && je_clickhouse_tls.do_not_increase_rss) {
+		/// Refuse allocation if it can't be served using only dirty pages.
+		return true;
+	}
+
 	if (trail == NULL) {
 		trail = ecache_alloc(tsdn, pac, ehooks, &pac->ecache_muzzy,
 		    edata, expand_amount, PAGE, zero, /* guarded*/ false);
