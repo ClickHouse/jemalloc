@@ -740,8 +740,9 @@ background_thread_postfork_child(tsdn_t *tsdn) {
 #if defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE) || defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
 		int ret;
 		pthread_condattr_t cond_attr;
-		pthread_condattr_init(&cond_attr);
-		if (pthread_condattr_setclock(&cond_attr,
+		if (pthread_condattr_init(&cond_attr)) {
+			ret = pthread_cond_init(&info->cond, NULL);
+		} else if (pthread_condattr_setclock(&cond_attr,
 		    CLOCK_MONOTONIC)) {
 			/*
 			 * Fall back to default (CLOCK_REALTIME)
@@ -877,7 +878,9 @@ background_thread_boot1(tsdn_t *tsdn, base_t *base) {
 #if defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE) || defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
 		{
 			pthread_condattr_t cond_attr;
-			pthread_condattr_init(&cond_attr);
+			if (pthread_condattr_init(&cond_attr)) {
+				return true;
+			}
 			if (pthread_condattr_setclock(&cond_attr,
 			    CLOCK_MONOTONIC)) {
 				pthread_condattr_destroy(&cond_attr);
