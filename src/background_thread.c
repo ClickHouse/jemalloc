@@ -190,16 +190,7 @@ background_thread_sleep(
 	info->npages_to_purge_new = 0;
 
 	nstime_t before_sleep;
-#if defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE) || defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
-	/* Use monotonic clock to match the condvar attribute (set in init). */
-	struct timespec ts_before;
-	clock_gettime(CLOCK_MONOTONIC, &ts_before);
-	nstime_init2(&before_sleep, ts_before.tv_sec, ts_before.tv_nsec);
-#else
-	struct timeval tv;
-	gettimeofday(&tv, NULL);
-	nstime_init2(&before_sleep, tv.tv_sec, tv.tv_usec * 1000);
-#endif
+	nstime_init_update(&before_sleep);
 
 	int ret;
 	if (interval == BACKGROUND_THREAD_INDEFINITE_SLEEP) {
@@ -232,15 +223,7 @@ background_thread_sleep(
 	}
 	if (config_stats) {
 		nstime_t after_sleep;
-#if defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE) || defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
-		struct timespec ts_after;
-		clock_gettime(CLOCK_MONOTONIC, &ts_after);
-		nstime_init2(&after_sleep, ts_after.tv_sec, ts_after.tv_nsec);
-#else
-		struct timeval tv;
-		gettimeofday(&tv, NULL);
-		nstime_init2(&after_sleep, tv.tv_sec, tv.tv_usec * 1000);
-#endif
+		nstime_init_update(&after_sleep);
 		if (nstime_compare(&after_sleep, &before_sleep) > 0) {
 			nstime_subtract(&after_sleep, &before_sleep);
 			nstime_add(&info->tot_sleep_time, &after_sleep);
@@ -755,11 +738,22 @@ background_thread_postfork_child(tsdn_t *tsdn) {
 		malloc_mutex_lock(tsdn, &info->mtx);
 		info->state = background_thread_stopped;
 #if defined(JEMALLOC_HAVE_CLOCK_MONOTONIC_COARSE) || defined(JEMALLOC_HAVE_CLOCK_MONOTONIC)
+		int ret;
 		pthread_condattr_t cond_attr;
 		pthread_condattr_init(&cond_attr);
-		pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC);
-		int ret = pthread_cond_init(&info->cond, &cond_attr);
-		pthread_condattr_destroy(&cond_attr);
+		if (pthread_condattr_setclock(&cond_attr,
+		    CLOCK_MONOTONIC)) {
+			/*
+			 * Fall back to default (CLOCK_REALTIME)
+			 * attributes if setclock fails.
+			 */
+			pthread_condattr_destroy(&cond_attr);
+			ret = pthread_cond_init(&info->cond, NULL);
+		} else {
+			ret = pthread_cond_init(&info->cond,
+			    &cond_attr);
+			pthread_condattr_destroy(&cond_attr);
+		}
 #else
 		int ret = pthread_cond_init(&info->cond, NULL);
 #endif
@@ -884,7 +878,11 @@ background_thread_boot1(tsdn_t *tsdn, base_t *base) {
 		{
 			pthread_condattr_t cond_attr;
 			pthread_condattr_init(&cond_attr);
-			pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC);
+			if (pthread_condattr_setclock(&cond_attr,
+			    CLOCK_MONOTONIC)) {
+				pthread_condattr_destroy(&cond_attr);
+				return true;
+			}
 			if (pthread_cond_init(&info->cond, &cond_attr)) {
 				pthread_condattr_destroy(&cond_attr);
 				return true;
