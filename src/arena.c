@@ -1954,9 +1954,20 @@ arena_init_huge(tsdn_t *tsdn, arena_t *a0) {
 		huge_arena_ind = narenas_total_get();
 		assert(huge_arena_ind != 0);
 		oversize_threshold = opt_oversize_threshold;
-		/* a0 init happened before malloc_conf_init. */
-		atomic_store_zu(&a0->pa_shard.pac.oversize_threshold,
-		    oversize_threshold, ATOMIC_RELAXED);
+		huge_enabled = true;
+	}
+
+	/*
+	 * a0 was initialized before malloc_conf_init, so its per-arena
+	 * oversize_threshold still has the compile-time default.  Update it
+	 * to match the (possibly disabled) runtime value so that
+	 * arena_choose_maybe_huge never routes allocations to the huge arena
+	 * when it does not exist.
+	 */
+	atomic_store_zu(&a0->pa_shard.pac.oversize_threshold,
+	    oversize_threshold, ATOMIC_RELAXED);
+
+	if (huge_enabled) {
 		/* Initialize huge_arena_pac_thp fields. */
 		base_t *b0 = a0->base;
 		/* Make sure that b0 thp auto-switch won't happen concurrently here. */
@@ -1971,7 +1982,6 @@ arena_init_huge(tsdn_t *tsdn, arena_t *a0) {
 		    WITNESS_RANK_LEAF, malloc_mutex_rank_exclusive);
 		edata_list_active_init(&(&huge_arena_pac_thp)->thp_lazy_list);
 		malloc_mutex_unlock(tsdn, &b0->mtx);
-		huge_enabled = true;
 	}
 
 	return huge_enabled;
