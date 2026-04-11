@@ -704,7 +704,8 @@ static inline void
 cache_bin_init_ptr_array_for_flush(
     cache_bin_t *bin, cache_bin_ptr_array_t *arr, cache_bin_sz_t nflush) {
 	arr->ptr = cache_bin_empty_position_get(bin) - nflush;
-	assert(cache_bin_ncached_get_local(bin) == 0 || *arr->ptr != NULL);
+	assert(nflush == 0 || cache_bin_ncached_get_local(bin) == 0
+	    || *arr->ptr != NULL);
 }
 
 static inline void
