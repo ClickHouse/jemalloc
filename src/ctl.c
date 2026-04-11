@@ -365,7 +365,6 @@ CTL_PROTO(experimental_hooks_prof_sample)
 CTL_PROTO(experimental_hooks_prof_sample_free)
 CTL_PROTO(experimental_hooks_thread_event)
 CTL_PROTO(experimental_hooks_safety_check_abort)
-CTL_PROTO(experimental_thread_activity_callback)
 CTL_PROTO(experimental_utilization_query)
 CTL_PROTO(experimental_utilization_batch_query)
 CTL_PROTO(experimental_arenas_i_pactivep)
@@ -890,9 +889,6 @@ static const ctl_named_node_t experimental_hooks_node[] = {
     {NAME("thread_event"), CTL(experimental_hooks_thread_event)},
 };
 
-static const ctl_named_node_t experimental_thread_node[] = {
-    {NAME("activity_callback"), CTL(experimental_thread_activity_callback)}};
-
 static const ctl_named_node_t experimental_utilization_node[] = {
     {NAME("query"), CTL(experimental_utilization_query)},
     {NAME("batch_query"), CTL(experimental_utilization_batch_query)}};
@@ -916,8 +912,7 @@ static const ctl_named_node_t experimental_node[] = {
     {NAME("arenas"), CHILD(indexed, experimental_arenas)},
     {NAME("arenas_create_ext"), CTL(experimental_arenas_create_ext)},
     {NAME("prof_recent"), CHILD(named, experimental_prof_recent)},
-    {NAME("batch_alloc"), CTL(experimental_batch_alloc)},
-    {NAME("thread"), CHILD(named, experimental_thread)}};
+    {NAME("batch_alloc"), CTL(experimental_batch_alloc)}};
 
 static const ctl_named_node_t root_node[] = {{NAME("version"), CTL(version)},
     {NAME("epoch"), CTL(epoch)},
@@ -3255,7 +3250,7 @@ CTL_RO_NL_GEN(arenas_bin_i_slab_size, bin_infos[mib[2]].slab_size, size_t)
 CTL_RO_NL_GEN(arenas_bin_i_nshards, bin_infos[mib[2]].n_shards, uint32_t)
 static const ctl_named_node_t *
 arenas_bin_i_index(tsdn_t *tsdn, const size_t *mib, size_t miblen, size_t i) {
-	if (i > SC_NBINS) {
+	if (i >= SC_NBINS) {
 		return NULL;
 	}
 	return super_arenas_bin_i_node;
@@ -3267,7 +3262,7 @@ CTL_RO_NL_GEN(arenas_lextent_i_size,
 static const ctl_named_node_t *
 arenas_lextent_i_index(
     tsdn_t *tsdn, const size_t *mib, size_t miblen, size_t i) {
-	if (i > SC_NSIZES - SC_NBINS) {
+	if (i >= SC_NSIZES - SC_NBINS) {
 		return NULL;
 	}
 	return super_arenas_lextent_i_node;
@@ -4003,7 +3998,7 @@ CTL_RO_CGEN(config_stats, stats_arenas_i_bins_j_nonfull_slabs,
 static const ctl_named_node_t *
 stats_arenas_i_bins_j_index(
     tsdn_t *tsdn, const size_t *mib, size_t miblen, size_t j) {
-	if (j > SC_NBINS) {
+	if (j >= SC_NBINS) {
 		return NULL;
 	}
 	return super_stats_arenas_i_bins_j_node;
@@ -4027,7 +4022,7 @@ CTL_RO_CGEN(config_stats, stats_arenas_i_lextents_j_curlextents,
 static const ctl_named_node_t *
 stats_arenas_i_lextents_j_index(
     tsdn_t *tsdn, const size_t *mib, size_t miblen, size_t j) {
-	if (j > SC_NSIZES - SC_NBINS) {
+	if (j >= SC_NSIZES - SC_NBINS) {
 		return NULL;
 	}
 	return super_stats_arenas_i_lextents_j_node;
@@ -4250,32 +4245,6 @@ experimental_hooks_remove_ctl(tsd_t *tsd, const size_t *mib, size_t miblen,
 		goto label_return;
 	}
 	hook_remove(tsd_tsdn(tsd), handle);
-	ret = 0;
-label_return:
-	return ret;
-}
-
-static int
-experimental_thread_activity_callback_ctl(tsd_t *tsd, const size_t *mib,
-    size_t miblen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-	int ret;
-
-	if (!config_stats) {
-		return ENOENT;
-	}
-
-	activity_callback_thunk_t t_old = tsd_activity_callback_thunk_get(tsd);
-	READ(t_old, activity_callback_thunk_t);
-
-	if (newp != NULL) {
-		/*
-		 * This initialization is unnecessary.  If it's omitted, though,
-		 * clang gets confused and warns on the subsequent use of t_new.
-		 */
-		activity_callback_thunk_t t_new = {NULL, NULL};
-		WRITE(t_new, activity_callback_thunk_t);
-		tsd_activity_callback_thunk_set(tsd, t_new);
-	}
 	ret = 0;
 label_return:
 	return ret;

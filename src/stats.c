@@ -981,13 +981,15 @@ stats_arena_hpa_shard_slabs_print(emitter_t *emitter, unsigned i) {
 	emitter_json_kv(
 	    emitter, "nactive_huge", emitter_type_size, &nactive_huge);
 	emitter_json_kv(
-	    emitter, "nactive_huge", emitter_type_size, &nactive_huge);
+	    emitter, "ndirty_huge", emitter_type_size, &ndirty_huge);
 	emitter_json_kv(emitter, "npageslabs_nonhuge", emitter_type_size,
 	    &npageslabs_nonhuge);
 	emitter_json_kv(
 	    emitter, "nactive_nonhuge", emitter_type_size, &nactive_nonhuge);
 	emitter_json_kv(
 	    emitter, "ndirty_nonhuge", emitter_type_size, &ndirty_nonhuge);
+	emitter_json_kv(emitter, "nretained_nonhuge", emitter_type_size,
+	    &nretained_nonhuge);
 	emitter_json_object_end(emitter); /* End "full_slabs" */
 
 	/* Next, empty slab stats. */
@@ -1022,13 +1024,15 @@ stats_arena_hpa_shard_slabs_print(emitter_t *emitter, unsigned i) {
 	emitter_json_kv(
 	    emitter, "nactive_huge", emitter_type_size, &nactive_huge);
 	emitter_json_kv(
-	    emitter, "nactive_huge", emitter_type_size, &nactive_huge);
+	    emitter, "ndirty_huge", emitter_type_size, &ndirty_huge);
 	emitter_json_kv(emitter, "npageslabs_nonhuge", emitter_type_size,
 	    &npageslabs_nonhuge);
 	emitter_json_kv(
 	    emitter, "nactive_nonhuge", emitter_type_size, &nactive_nonhuge);
 	emitter_json_kv(
 	    emitter, "ndirty_nonhuge", emitter_type_size, &ndirty_nonhuge);
+	emitter_json_kv(emitter, "nretained_nonhuge", emitter_type_size,
+	    &nretained_nonhuge);
 	emitter_json_object_end(emitter); /* End "empty_slabs" */
 
 	/* Last, nonfull slab stats. */
@@ -1103,6 +1107,8 @@ stats_arena_hpa_shard_slabs_print(emitter_t *emitter, unsigned i) {
 		    &nactive_nonhuge);
 		emitter_json_kv(emitter, "ndirty_nonhuge", emitter_type_size,
 		    &ndirty_nonhuge);
+		emitter_json_kv(emitter, "nretained_nonhuge", emitter_type_size,
+		    &nretained_nonhuge);
 		emitter_json_object_end(emitter);
 	}
 	emitter_json_array_end(emitter); /* End "nonfull_slabs" */
@@ -1113,9 +1119,8 @@ stats_arena_hpa_shard_slabs_print(emitter_t *emitter, unsigned i) {
 
 static void
 stats_arena_hpa_shard_print(emitter_t *emitter, unsigned i, uint64_t uptime) {
-	stats_arena_hpa_shard_sec_print(emitter, i);
-
 	emitter_json_object_kv_begin(emitter, "hpa_shard");
+	stats_arena_hpa_shard_sec_print(emitter, i);
 	stats_arena_hpa_shard_counters_print(emitter, i, uptime);
 	stats_arena_hpa_shard_slabs_print(emitter, i);
 	emitter_json_object_end(emitter); /* End "hpa_shard" */

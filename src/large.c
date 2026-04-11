@@ -147,7 +147,7 @@ large_ralloc_no_move(tsdn_t *tsdn, edata_t *edata, size_t usize_min,
 		}
 		/* Try again, this time with usize_min. */
 		if (usize_min < usize_max && usize_min > oldusize
-		    && large_ralloc_no_move_expand(
+		    && !large_ralloc_no_move_expand(
 		        tsdn, edata, usize_min, zero)) {
 			arena_decay_tick(tsdn, arena_get_from_edata(edata));
 			return false;
@@ -274,11 +274,6 @@ large_dalloc(tsdn_t *tsdn, edata_t *edata) {
 	large_dalloc_prep_impl(tsdn, arena, edata, false);
 	large_dalloc_finish_impl(tsdn, arena, edata);
 	arena_decay_tick(tsdn, arena);
-}
-
-size_t
-large_salloc(tsdn_t *tsdn, const edata_t *edata) {
-	return edata_usize_get(edata);
 }
 
 void

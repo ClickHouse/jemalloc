@@ -916,15 +916,20 @@ extent_try_coalesce_impl(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks,
 		size_t   max_next_neighbor = max_size > edata_size_get(edata)
 		      ? max_size - edata_size_get(edata)
 		      : 0;
-		if (next != NULL && edata_size_get(next) <= max_next_neighbor) {
-			if (!extent_coalesce(
-			        tsdn, pac, ehooks, ecache, edata, next, true)) {
-				if (ecache->delay_coalesce) {
-					/* Do minimal coalescing. */
-					*coalesced = true;
-					return edata;
+		if (next != NULL) {
+			if (edata_size_get(next) > max_next_neighbor) {
+				emap_release_edata(
+				    tsdn, pac->emap, next, ecache->state);
+			} else {
+				if (!extent_coalesce(tsdn, pac, ehooks, ecache,
+				        edata, next, true)) {
+					if (ecache->delay_coalesce) {
+						/* Do minimal coalescing. */
+						*coalesced = true;
+						return edata;
+					}
+					again = true;
 				}
-				again = true;
 			}
 		}
 
@@ -934,16 +939,21 @@ extent_try_coalesce_impl(tsdn_t *tsdn, pac_t *pac, ehooks_t *ehooks,
 		size_t   max_prev_neighbor = max_size > edata_size_get(edata)
 		      ? max_size - edata_size_get(edata)
 		      : 0;
-		if (prev != NULL && edata_size_get(prev) <= max_prev_neighbor) {
-			if (!extent_coalesce(tsdn, pac, ehooks, ecache, edata,
-			        prev, false)) {
-				edata = prev;
-				if (ecache->delay_coalesce) {
-					/* Do minimal coalescing. */
-					*coalesced = true;
-					return edata;
+		if (prev != NULL) {
+			if (edata_size_get(prev) > max_prev_neighbor) {
+				emap_release_edata(
+				    tsdn, pac->emap, prev, ecache->state);
+			} else {
+				if (!extent_coalesce(tsdn, pac, ehooks, ecache,
+				        edata, prev, false)) {
+					edata = prev;
+					if (ecache->delay_coalesce) {
+						/* Do minimal coalescing. */
+						*coalesced = true;
+						return edata;
+					}
+					again = true;
 				}
-				again = true;
 			}
 		}
 	} while (again);
@@ -1237,13 +1247,6 @@ extent_commit_impl(tsdn_t *tsdn, ehooks_t *ehooks, edata_t *edata,
 	    edata_size_get(edata), offset, length);
 	edata_committed_set(edata, edata_committed_get(edata) || !err);
 	return err;
-}
-
-bool
-extent_commit_wrapper(tsdn_t *tsdn, ehooks_t *ehooks, edata_t *edata,
-    size_t offset, size_t length) {
-	return extent_commit_impl(tsdn, ehooks, edata, offset, length,
-	    /* growing_retained */ false);
 }
 
 static bool

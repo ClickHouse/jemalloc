@@ -185,6 +185,109 @@ static const char  *arena_mutex_names[] = {"large", "extent_avail",
 static const size_t num_arena_mutexes = sizeof(arena_mutex_names)
     / sizeof(arena_mutex_names[0]);
 
+static const char *
+json_find_object_end(const char *object_begin) {
+	int depth = 0;
+	for (const char *cur = object_begin; *cur != '\0'; cur++) {
+		if (*cur == '{') {
+			depth++;
+		} else if (*cur == '}') {
+			depth--;
+			if (depth == 0) {
+				return cur;
+			}
+			if (depth < 0) {
+				return NULL;
+			}
+		}
+	}
+	return NULL;
+}
+
+static const char *
+json_find_array_end(const char *array_begin) {
+	int depth = 0;
+	for (const char *cur = array_begin; *cur != '\0'; cur++) {
+		if (*cur == '[') {
+			depth++;
+		} else if (*cur == ']') {
+			depth--;
+			if (depth == 0) {
+				return cur;
+			}
+			if (depth < 0) {
+				return NULL;
+			}
+		}
+	}
+	return NULL;
+}
+
+static const char *
+json_find_previous_hpa_shard_object(
+    const char *json, const char *pos, const char **object_end) {
+	*object_end = NULL;
+	const char *found = NULL;
+	const char *cur = json;
+	const char *next;
+
+	while ((next = strstr(cur, "\"hpa_shard\":{")) != NULL && next < pos) {
+		found = strchr(next, '{');
+		cur = next + 1;
+	}
+	if (found == NULL) {
+		return NULL;
+	}
+	*object_end = json_find_object_end(found);
+	return found;
+}
+
+static const char *
+json_find_named_object(
+    const char *json, const char *key, const char **object_end) {
+	*object_end = NULL;
+	char   search_key[128];
+	size_t written = malloc_snprintf(
+	    search_key, sizeof(search_key), "\"%s\":{", key);
+	if (written >= sizeof(search_key)) {
+		return NULL;
+	}
+
+	const char *object_begin = strstr(json, search_key);
+	if (object_begin == NULL) {
+		return NULL;
+	}
+	object_begin = strchr(object_begin, '{');
+	if (object_begin == NULL) {
+		return NULL;
+	}
+	*object_end = json_find_object_end(object_begin);
+	return object_begin;
+}
+
+static const char *
+json_find_named_array(
+    const char *json, const char *key, const char **array_end) {
+	*array_end = NULL;
+	char   search_key[128];
+	size_t written = malloc_snprintf(
+	    search_key, sizeof(search_key), "\"%s\":[", key);
+	if (written >= sizeof(search_key)) {
+		return NULL;
+	}
+
+	const char *array_begin = strstr(json, search_key);
+	if (array_begin == NULL) {
+		return NULL;
+	}
+	array_begin = strchr(array_begin, '[');
+	if (array_begin == NULL) {
+		return NULL;
+	}
+	*array_end = json_find_array_end(array_begin);
+	return array_begin;
+}
+
 TEST_BEGIN(test_json_stats_mutexes) {
 	test_skip_if(!config_stats);
 
@@ -237,7 +340,170 @@ TEST_BEGIN(test_json_stats_mutexes) {
 }
 TEST_END
 
+/*
+ * Verify that hpa_shard JSON stats contain "ndirty_huge" key in both
+ * full_slabs and empty_slabs sections.  A previous bug emitted duplicate
+ * "nactive_huge" instead of "ndirty_huge".
+ */
+TEST_BEGIN(test_hpa_shard_json_ndirty_huge) {
+	test_skip_if(!config_stats);
+	test_skip_if(!hpa_supported());
+
+	/* Do some allocation to create HPA state. */
+	void *p = mallocx(PAGE, MALLOCX_TCACHE_NONE);
+	expect_ptr_not_null(p, "Unexpected mallocx failure");
+
+	uint64_t epoch = 1;
+	size_t   sz = sizeof(epoch);
+	expect_d_eq(mallctl("epoch", NULL, NULL, (void *)&epoch, sz), 0,
+	    "Unexpected mallctl() failure");
+
+	stats_buf_t sbuf;
+	stats_buf_init(&sbuf);
+	/* "J" for JSON, include per-arena HPA stats. */
+	malloc_stats_print(stats_buf_write_cb, &sbuf, "J");
+
+	/*
+	 * Find "full_slabs" and check it contains "ndirty_huge".
+	 */
+	const char *full_slabs = strstr(sbuf.buf, "\"full_slabs\"");
+	if (full_slabs != NULL) {
+		const char *empty_slabs = strstr(full_slabs, "\"empty_slabs\"");
+		const char *search_end = empty_slabs != NULL
+		    ? empty_slabs
+		    : sbuf.buf + sbuf.len;
+		/*
+		 * Search for "ndirty_huge" between full_slabs and
+		 * empty_slabs.
+		 */
+		const char *ndirty = full_slabs;
+		bool        found = false;
+		while (ndirty < search_end) {
+			ndirty = strstr(ndirty, "\"ndirty_huge\"");
+			if (ndirty != NULL && ndirty < search_end) {
+				found = true;
+				break;
+			}
+			break;
+		}
+		expect_true(
+		    found, "full_slabs section should contain ndirty_huge key");
+	}
+
+	/*
+	 * Find "empty_slabs" and check it contains "ndirty_huge".
+	 */
+	const char *empty_slabs = strstr(sbuf.buf, "\"empty_slabs\"");
+	if (empty_slabs != NULL) {
+		/* Find the end of the empty_slabs object. */
+		const char *nonfull = strstr(empty_slabs, "\"nonfull_slabs\"");
+		const char *search_end = nonfull != NULL ? nonfull
+		                                         : sbuf.buf + sbuf.len;
+		const char *ndirty = strstr(empty_slabs, "\"ndirty_huge\"");
+		bool        found = (ndirty != NULL && ndirty < search_end);
+		expect_true(found,
+		    "empty_slabs section should contain ndirty_huge key");
+	}
+
+	stats_buf_fini(&sbuf);
+	dallocx(p, MALLOCX_TCACHE_NONE);
+}
+TEST_END
+
+TEST_BEGIN(test_hpa_shard_json_contains_sec_stats) {
+	test_skip_if(!config_stats);
+	test_skip_if(!hpa_supported());
+
+	void *p = mallocx(PAGE, MALLOCX_TCACHE_NONE);
+	expect_ptr_not_null(p, "Unexpected mallocx failure");
+
+	uint64_t epoch = 1;
+	size_t   sz = sizeof(epoch);
+	expect_d_eq(mallctl("epoch", NULL, NULL, (void *)&epoch, sz), 0,
+	    "Unexpected mallctl() failure");
+
+	stats_buf_t sbuf;
+	stats_buf_init(&sbuf);
+	malloc_stats_print(stats_buf_write_cb, &sbuf, "J");
+
+	const char *sec_bytes = strstr(sbuf.buf, "\"sec_bytes\"");
+	expect_ptr_not_null(sec_bytes, "JSON output should contain sec_bytes");
+	const char *hpa_shard_end = NULL;
+	const char *hpa_shard = json_find_previous_hpa_shard_object(
+	    sbuf.buf, sec_bytes, &hpa_shard_end);
+	expect_ptr_not_null(hpa_shard,
+	    "sec_bytes should be associated with an hpa_shard JSON object");
+	expect_ptr_not_null(hpa_shard_end,
+	    "Could not find end of enclosing hpa_shard JSON object");
+	expect_true(sec_bytes != NULL && sec_bytes < hpa_shard_end,
+	    "sec_bytes should be nested inside hpa_shard JSON object");
+	const char *sec_hits = strstr(hpa_shard, "\"sec_hits\"");
+	expect_true(sec_hits != NULL && sec_hits < hpa_shard_end,
+	    "sec_hits should be nested inside hpa_shard JSON object");
+	const char *sec_misses = strstr(hpa_shard, "\"sec_misses\"");
+	expect_true(sec_misses != NULL && sec_misses < hpa_shard_end,
+	    "sec_misses should be nested inside hpa_shard JSON object");
+
+	stats_buf_fini(&sbuf);
+	dallocx(p, MALLOCX_TCACHE_NONE);
+}
+TEST_END
+
+TEST_BEGIN(test_hpa_shard_json_contains_retained_stats) {
+	test_skip_if(!config_stats);
+	test_skip_if(!hpa_supported());
+
+	void *p = mallocx(PAGE, MALLOCX_TCACHE_NONE);
+	expect_ptr_not_null(p, "Unexpected mallocx failure");
+
+	uint64_t epoch = 1;
+	size_t   sz = sizeof(epoch);
+	expect_d_eq(mallctl("epoch", NULL, NULL, (void *)&epoch, sz), 0,
+	    "Unexpected mallctl() failure");
+
+	stats_buf_t sbuf;
+	stats_buf_init(&sbuf);
+	malloc_stats_print(stats_buf_write_cb, &sbuf, "J");
+
+	const char *full_slabs_end = NULL;
+	const char *full_slabs = json_find_named_object(
+	    sbuf.buf, "full_slabs", &full_slabs_end);
+	expect_ptr_not_null(
+	    full_slabs, "JSON output should contain full_slabs");
+	const char *full_retained = strstr(full_slabs, "\"nretained_nonhuge\"");
+	expect_true(full_retained != NULL && full_retained < full_slabs_end,
+	    "full_slabs should contain nretained_nonhuge");
+
+	const char *empty_slabs_end = NULL;
+	const char *empty_slabs = json_find_named_object(
+	    sbuf.buf, "empty_slabs", &empty_slabs_end);
+	expect_ptr_not_null(
+	    empty_slabs, "JSON output should contain empty_slabs");
+	const char *empty_retained = strstr(
+	    empty_slabs, "\"nretained_nonhuge\"");
+	expect_true(empty_retained != NULL && empty_retained < empty_slabs_end,
+	    "empty_slabs should contain nretained_nonhuge");
+
+	const char *nonfull_slabs_end = NULL;
+	const char *nonfull_slabs = json_find_named_array(
+	    sbuf.buf, "nonfull_slabs", &nonfull_slabs_end);
+	expect_ptr_not_null(
+	    nonfull_slabs, "JSON output should contain nonfull_slabs");
+	const char *nonfull_retained = strstr(
+	    nonfull_slabs, "\"nretained_nonhuge\"");
+	expect_true(
+	    nonfull_retained != NULL && nonfull_retained < nonfull_slabs_end,
+	    "nonfull_slabs should contain nretained_nonhuge");
+
+	stats_buf_fini(&sbuf);
+	dallocx(p, MALLOCX_TCACHE_NONE);
+}
+TEST_END
+
 int
 main(void) {
-	return test(test_json_stats_mutexes);
+	return test_no_reentrancy(test_json_stats_mutexes,
+	    test_hpa_shard_json_ndirty_huge,
+	    test_hpa_shard_json_contains_sec_stats,
+	    test_hpa_shard_json_contains_retained_stats);
 }
