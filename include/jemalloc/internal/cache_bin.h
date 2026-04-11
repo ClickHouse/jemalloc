@@ -225,7 +225,17 @@ static inline void
 cache_bin_assert_earlier(
     cache_bin_t *bin, cache_bin_sz_t earlier, cache_bin_sz_t later) {
 	if (earlier > later) {
-		assert(bin->low_bits_full > bin->low_bits_empty);
+		/*
+		 * The bin's address range crosses the 16-bit boundary.
+		 * Compute low_bound inline (the getter is defined later)
+		 * and use it rather than the mutable low_bits_full, which
+		 * can itself wrap past the boundary as stashed items
+		 * advance it.
+		 */
+		cache_bin_sz_t low_bound = (cache_bin_sz_t)
+		    bin->low_bits_empty
+		    - cache_bin_ncached_max_get(bin) * sizeof(void *);
+		assert(low_bound > bin->low_bits_empty);
 	}
 }
 
