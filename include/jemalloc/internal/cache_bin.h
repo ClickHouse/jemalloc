@@ -403,6 +403,11 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	if (likely(low_bits != bin->low_bits_low_water)) {
 		bin->stack_head = new_head;
 		*success = true;
+		/* Verify we're not returning NULL from a non-empty bin. */
+		if (unlikely(*(void * volatile *)&ret == NULL)) {
+			safety_check_fail(
+			    "NULL pointer returned from tcache bin alloc\n");
+		}
 		return ret;
 	}
 	if (!adjust_low_water) {
@@ -418,6 +423,11 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 		bin->stack_head = new_head;
 		bin->low_bits_low_water = (cache_bin_sz_t)(uintptr_t)new_head;
 		*success = true;
+		/* Verify we're not returning NULL from a non-empty bin. */
+		if (unlikely(*(void * volatile *)&ret == NULL)) {
+			safety_check_fail(
+			    "NULL pointer returned from tcache bin alloc\n");
+		}
 		return ret;
 	}
 	*success = false;
@@ -507,6 +517,12 @@ cache_bin_dalloc_easy(cache_bin_t *bin, void *ptr) {
 	*bin->stack_head = ptr;
 	cache_bin_assert_earlier(bin, bin->low_bits_full,
 	    (cache_bin_sz_t)(uintptr_t)bin->stack_head);
+
+	/* Verify the store survived optimization — volatile forces the read. */
+	if (unlikely(*(void * volatile *)bin->stack_head == NULL)) {
+		safety_check_fail(
+		    "NULL detected in tcache bin after store of %p\n", ptr);
+	}
 
 	return true;
 }
