@@ -224,6 +224,12 @@ bitmap_set(bitmap_t *bitmap, const bitmap_info_t *binfo, size_t bit) {
 	assert(g & (ZU(1) << (bit & BITMAP_GROUP_NBITS_MASK)));
 	g ^= ZU(1) << (bit & BITMAP_GROUP_NBITS_MASK);
 	*gp = g;
+	/* Verify the store was not eliminated by DSE. */
+	if (unlikely(*(volatile bitmap_t *)gp != g)) {
+		safety_check_fail(
+		    "bitmap_set: leaf store eliminated at group %zu, "
+		    "expected %lx\n", goff, (unsigned long)g);
+	}
 	assert(bitmap_get(bitmap, binfo, bit));
 #ifdef BITMAP_USE_TREE
 	/* Propagate group state transitions up the tree. */
@@ -237,6 +243,13 @@ bitmap_set(bitmap_t *bitmap, const bitmap_info_t *binfo, size_t bit) {
 			assert(g & (ZU(1) << (bit & BITMAP_GROUP_NBITS_MASK)));
 			g ^= ZU(1) << (bit & BITMAP_GROUP_NBITS_MASK);
 			*gp = g;
+			/* Verify tree store was not eliminated. */
+			if (unlikely(*(volatile bitmap_t *)gp != g)) {
+				safety_check_fail(
+				    "bitmap_set: tree store eliminated at "
+				    "level %u group %zu, expected %lx\n",
+				    i, goff, (unsigned long)g);
+			}
 			if (g != 0) {
 				break;
 			}
@@ -320,10 +333,21 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 #ifdef BITMAP_USE_TREE
 	i = binfo->nlevels - 1;
 	g = bitmap[binfo->levels[i].group_offset];
+	if (unlikely(g == 0)) {
+		safety_check_fail(
+		    "bitmap_sfu: tree root is zero (bitmap full), "
+		    "nlevels %u\n", binfo->nlevels);
+	}
 	bit = ffs_lu(g);
 	while (i > 0) {
 		i--;
 		g = bitmap[binfo->levels[i].group_offset + bit];
+		if (unlikely(g == 0)) {
+			safety_check_fail(
+			    "bitmap_sfu: tree level %u group is zero "
+			    "at offset %zu\n", i,
+			    binfo->levels[i].group_offset + bit);
+		}
 		bit = (bit << LG_BITMAP_GROUP_NBITS) + ffs_lu(g);
 	}
 #else
@@ -331,6 +355,11 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 	g = bitmap[0];
 	while (g == 0) {
 		i++;
+		if (unlikely(i >= BITMAP_BITS2GROUPS(binfo->nbits))) {
+			safety_check_fail(
+			    "bitmap_sfu: all %u groups are zero "
+			    "(bitmap full)\n", i);
+		}
 		g = bitmap[i];
 	}
 	bit = (i << LG_BITMAP_GROUP_NBITS) + ffs_lu(g);

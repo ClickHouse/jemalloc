@@ -14,6 +14,7 @@
 #include "jemalloc/internal/slab_data.h"
 #include "jemalloc/internal/sz.h"
 #include "jemalloc/internal/typed_list.h"
+#include <jemalloc/internal/util.h>
 
 /*
  * sizeof(edata_t) is 128 bytes on 64-bit architectures.  Ensure the alignment
@@ -572,6 +573,8 @@ edata_nfree_inc(edata_t *edata) {
 static inline void
 edata_nfree_dec(edata_t *edata) {
 	assert(edata_slab_get(edata));
+        if (unlikely(edata_nfree_get(edata) == 0))
+            __builtin_trap();
 	edata->e_bits -= ((uint64_t)1U << EDATA_BITS_NFREE_SHIFT);
 }
 
