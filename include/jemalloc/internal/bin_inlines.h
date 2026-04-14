@@ -83,6 +83,29 @@ bin_dalloc_locked_step(tsdn_t *tsdn, bool is_auto, bin_t *bin,
 	bitmap_unset(slab_data->bitmap, &bin_info->bitmap_info, regind);
 	edata_nfree_inc(slab);
 
+	/* Debug: verify nfree/bitmap consistency after free. */
+	{
+		unsigned actual_free = 0;
+		unsigned ngroups =
+#ifdef BITMAP_USE_TREE
+		    bin_info->bitmap_info.levels[
+		        bin_info->bitmap_info.nlevels].group_offset;
+#else
+		    bin_info->bitmap_info.ngroups;
+#endif
+		for (unsigned gi = 0; gi < ngroups; gi++) {
+			actual_free += popcount_lu(slab_data->bitmap[gi]);
+		}
+		if (unlikely(actual_free != edata_nfree_get(slab))) {
+			safety_check_fail(
+			    "bin_dalloc_locked_step: post-free "
+			    "nfree/bitmap mismatch for binind %u "
+			    "regind %zu: nfree=%u actual=%u\n",
+			    binind, regind,
+			    edata_nfree_get(slab), actual_free);
+		}
+	}
+
 	if (config_stats) {
 		info->ndalloc++;
 	}
