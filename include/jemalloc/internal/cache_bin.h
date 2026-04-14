@@ -392,7 +392,7 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	 * This may read from the empty position; however the loaded value won't
 	 * be used.  It's safe because the stack has one more slot reserved.
 	 */
-	void          *ret = *bin->stack_head;
+	void          *ret = *(void * volatile *)bin->stack_head;
 	cache_bin_sz_t low_bits = (cache_bin_sz_t)(uintptr_t)bin->stack_head;
 	void         **new_head = bin->stack_head + 1;
 
