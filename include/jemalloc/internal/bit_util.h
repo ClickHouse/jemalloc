@@ -19,19 +19,19 @@
  */
 static inline unsigned
 ffs_llu(unsigned long long x) {
-	util_assume(x != 0);
+	assert(x != 0);
 	return JEMALLOC_INTERNAL_FFSLL(x) - 1;
 }
 
 static inline unsigned
 ffs_lu(unsigned long x) {
-	util_assume(x != 0);
+	assert(x != 0);
 	return JEMALLOC_INTERNAL_FFSL(x) - 1;
 }
 
 static inline unsigned
 ffs_u(unsigned x) {
-	util_assume(x != 0);
+	assert(x != 0);
 	return JEMALLOC_INTERNAL_FFS(x) - 1;
 }
 
