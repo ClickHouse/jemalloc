@@ -4,6 +4,7 @@
 #include "jemalloc/internal/jemalloc_preamble.h"
 #include "jemalloc/internal/bit_util.h"
 #include "jemalloc/internal/sc.h"
+#include "jemalloc/internal/safety_check.h"
 
 typedef unsigned long bitmap_t;
 #define LG_SIZEOF_BITMAP LG_SIZEOF_LONG

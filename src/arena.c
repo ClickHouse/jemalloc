@@ -863,6 +863,19 @@ arena_slab_alloc(tsdn_t *tsdn, arena_t *arena, szind_t binind,
 	edata_nfree_binshard_set(slab, bin_info->nregs, binshard);
 	bitmap_init(slab_data->bitmap, &bin_info->bitmap_info, false);
 
+	/*
+	 * Verify bitmap_init was not optimized away by LTO.
+	 * An "empty" (all-free) bitmap should have the first group
+	 * set to all-ones (0xff...ff). If it's zero, the memset(0xff)
+	 * inside bitmap_init was eliminated.
+	 */
+	if (unlikely(*(volatile bitmap_t *)&slab_data->bitmap[0] == 0)) {
+		safety_check_fail(
+		    "arena_slab_alloc: bitmap_init was eliminated by "
+		    "the compiler, bitmap[0]=%lx\n",
+		    (unsigned long)slab_data->bitmap[0]);
+	}
+
 	return slab;
 }
 
@@ -915,6 +928,36 @@ label_refill:
 		edata_t *slabcur = bin->slabcur;
 		if (slabcur != NULL && edata_nfree_get(slabcur) > 0) {
 			/*
+			 * Debug: verify nfree matches actual bitmap
+			 * free count for the crashing size class.
+			 */
+			{
+				slab_data_t *sd = edata_slab_data_get(slabcur);
+				unsigned actual_free = 0;
+				unsigned ngroups =
+#ifdef BITMAP_USE_TREE
+				    bin_info->bitmap_info.levels[
+				        bin_info->bitmap_info.nlevels]
+				        .group_offset;
+#else
+				    bin_info->bitmap_info.ngroups;
+#endif
+				for (unsigned gi = 0; gi < ngroups; gi++) {
+					actual_free += popcount_lu(
+					    sd->bitmap[gi]);
+				}
+				if (unlikely(actual_free
+				    != edata_nfree_get(slabcur))) {
+					safety_check_fail(
+					    "arena_cache_bin_fill_small: "
+					    "nfree/bitmap mismatch for "
+					    "binind %u: nfree=%u actual=%u"
+					    "\n", binind,
+					    edata_nfree_get(slabcur),
+					    actual_free);
+				}
+			}
+			/*
 			 * Use up the free slots if the total filled <= nfill_max.
 			 * Otherwise, fallback to nfill_min for a more conservative
 			 * memory usage.
@@ -926,6 +969,37 @@ label_refill:
 
 			bin_slab_reg_alloc_batch(
 			    slabcur, bin_info, cnt, &arr->ptr[filled]);
+
+			/* Debug: verify consistency after batch alloc. */
+			{
+				slab_data_t *sd = edata_slab_data_get(
+				    slabcur);
+				unsigned actual_free = 0;
+				unsigned ngroups =
+#ifdef BITMAP_USE_TREE
+				    bin_info->bitmap_info.levels[
+				        bin_info->bitmap_info.nlevels]
+				        .group_offset;
+#else
+				    bin_info->bitmap_info.ngroups;
+#endif
+				for (unsigned gi = 0; gi < ngroups; gi++) {
+					actual_free += popcount_lu(
+					    sd->bitmap[gi]);
+				}
+				if (unlikely(actual_free
+				    != edata_nfree_get(slabcur))) {
+					safety_check_fail(
+					    "arena_cache_bin_fill_small: "
+					    "post-batch nfree/bitmap "
+					    "mismatch for binind %u: "
+					    "nfree=%u actual=%u cnt=%u\n",
+					    binind,
+					    edata_nfree_get(slabcur),
+					    actual_free, cnt);
+				}
+			}
+
 			made_progress = true;
 			filled += cnt;
 			continue;
