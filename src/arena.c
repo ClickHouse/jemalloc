@@ -970,7 +970,48 @@ label_refill:
 			bin_slab_reg_alloc_batch(
 			    slabcur, bin_info, cnt, &arr->ptr[filled]);
 
-			/* Debug: verify consistency after batch alloc. */
+			/*
+			 * Debug: check for duplicate pointers in the
+			 * batch just returned, and also against
+			 * previously filled entries.
+			 */
+			{
+				for (unsigned di = 0; di < cnt; di++) {
+					void *p = arr->ptr[filled + di];
+					/* Check within this batch. */
+					for (unsigned dj = di + 1;
+					    dj < cnt; dj++) {
+						if (unlikely(p ==
+						    arr->ptr[filled + dj])) {
+							safety_check_fail(
+							    "batch alloc "
+							    "dup: ptr %p "
+							    "at %u and %u "
+							    "(binind %u "
+							    "cnt %u)\n",
+							    p, di, dj,
+							    binind, cnt);
+						}
+					}
+					/* Check against earlier fills. */
+					for (unsigned dk = 0;
+					    dk < filled; dk++) {
+						if (unlikely(p ==
+						    arr->ptr[dk])) {
+							safety_check_fail(
+							    "refill dup: "
+							    "ptr %p at "
+							    "batch %u and "
+							    "prev %u "
+							    "(binind %u)\n",
+							    p, di, dk,
+							    binind);
+						}
+					}
+				}
+			}
+
+			/* Debug: verify nfree/bitmap consistency. */
 			{
 				slab_data_t *sd = edata_slab_data_get(
 				    slabcur);
