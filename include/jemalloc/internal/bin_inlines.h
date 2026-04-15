@@ -80,7 +80,25 @@ bin_dalloc_locked_step(tsdn_t *tsdn, bool is_auto, bin_t *bin,
 	/* Freeing an unallocated pointer can cause assertion failure. */
 	assert(bitmap_get(slab_data->bitmap, &bin_info->bitmap_info, regind));
 
+	/* Debug: snapshot bitmap group before unset. */
+	size_t goff_dbg = regind >> LG_BITMAP_GROUP_NBITS;
+	bitmap_t before_dbg = *(volatile bitmap_t *)&slab_data->bitmap[goff_dbg];
+
 	bitmap_unset(slab_data->bitmap, &bin_info->bitmap_info, regind);
+
+	/* Debug: verify the bit was actually flipped. */
+	bitmap_t after_dbg = *(volatile bitmap_t *)&slab_data->bitmap[goff_dbg];
+	bitmap_t expected_bit = ZU(1) << (regind & BITMAP_GROUP_NBITS_MASK);
+	if (unlikely((before_dbg | expected_bit) != after_dbg)) {
+		safety_check_fail(
+		    "bitmap_unset lost: binind %u regind %zu "
+		    "goff %zu before %lx after %lx expected_bit %lx\n",
+		    binind, regind, goff_dbg,
+		    (unsigned long)before_dbg,
+		    (unsigned long)after_dbg,
+		    (unsigned long)expected_bit);
+	}
+
 	edata_nfree_inc(slab);
 
 	/* Debug: verify nfree/bitmap consistency after free. */
