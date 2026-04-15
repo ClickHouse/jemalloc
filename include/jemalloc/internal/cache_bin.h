@@ -403,20 +403,6 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	if (likely(low_bits != bin->low_bits_low_water)) {
 		bin->stack_head = new_head;
 		*success = true;
-		/* Check for duplicate: ret should not still be in the bin. */
-		{
-			cache_bin_sz_t remain =
-			    cache_bin_ncached_get_internal(bin);
-			unsigned scan = remain < 200 ? remain : 200;
-			for (unsigned di = 0; di < scan; di++) {
-				if (unlikely(new_head[di] == ret)) {
-					safety_check_fail(
-					    "tcache alloc returned duplicate "
-					    "ptr %p (also at pos %u)\n",
-					    ret, di);
-				}
-			}
-		}
 		return ret;
 	}
 	if (!adjust_low_water) {
