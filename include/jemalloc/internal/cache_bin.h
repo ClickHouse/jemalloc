@@ -403,6 +403,7 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	if (likely(low_bits != bin->low_bits_low_water)) {
 		bin->stack_head = new_head;
 		*success = true;
+		tcache_debug_on_pop(ret);
 		return ret;
 	}
 	if (!adjust_low_water) {
@@ -418,6 +419,7 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 		bin->stack_head = new_head;
 		bin->low_bits_low_water = (cache_bin_sz_t)(uintptr_t)new_head;
 		*success = true;
+		tcache_debug_on_pop(ret);
 		return ret;
 	}
 	*success = false;
