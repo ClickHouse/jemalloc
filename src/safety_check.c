@@ -58,9 +58,10 @@ safety_check_fail(const char *format, ...) {
  * stack traces.
  */
 #include <execinfo.h>
+#include <sys/mman.h>
 
-#define TCACHE_BT_FRAMES 15
-#define TCACHE_BT_TABLE_SIZE 16384  /* must be power of 2 */
+#define TCACHE_BT_FRAMES 8
+#define TCACHE_BT_TABLE_SIZE (1 << 16)  /* 65536, must be power of 2 */
 #define TCACHE_BT_TABLE_MASK (TCACHE_BT_TABLE_SIZE - 1)
 
 typedef struct {
@@ -68,8 +69,20 @@ typedef struct {
 	void *frames[TCACHE_BT_FRAMES];
 	int nframes;
 } tcache_bt_entry_t;
+/* 8 + 64 + 4 = 76 bytes per entry, 65536 entries = ~5MB per thread */
 
-static __thread tcache_bt_entry_t tcache_bt_table[TCACHE_BT_TABLE_SIZE];
+static __thread tcache_bt_entry_t *tcache_bt_table;
+
+static void
+tcache_bt_ensure_table(void) {
+	if (likely(tcache_bt_table != NULL)) {
+		return;
+	}
+	/* Use mmap to avoid re-entering jemalloc. */
+	size_t sz = TCACHE_BT_TABLE_SIZE * sizeof(tcache_bt_entry_t);
+	tcache_bt_table = (tcache_bt_entry_t *)mmap(NULL, sz,
+	    PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+}
 
 static unsigned
 tcache_bt_hash(void *ptr) {
@@ -82,6 +95,8 @@ tcache_bt_hash(void *ptr) {
 
 static void
 tcache_bt_record(void *ptr) {
+	tcache_bt_ensure_table();
+	if (tcache_bt_table == MAP_FAILED) return;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
 		unsigned slot = (idx + i) & TCACHE_BT_TABLE_MASK;
@@ -97,6 +112,8 @@ tcache_bt_record(void *ptr) {
 
 static tcache_bt_entry_t *
 tcache_bt_find(void *ptr) {
+	if (tcache_bt_table == NULL || tcache_bt_table == MAP_FAILED)
+		return NULL;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
 		unsigned slot = (idx + i) & TCACHE_BT_TABLE_MASK;
@@ -112,6 +129,8 @@ tcache_bt_find(void *ptr) {
 
 static void
 tcache_bt_remove(void *ptr) {
+	if (tcache_bt_table == NULL || tcache_bt_table == MAP_FAILED)
+		return;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
 		unsigned slot = (idx + i) & TCACHE_BT_TABLE_MASK;
