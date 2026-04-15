@@ -664,6 +664,27 @@ tcache_bin_flush_bottom(tsd_t *tsd, tcache_t *tcache, cache_bin_t *cache_bin,
 void
 tcache_bin_flush_small(tsd_t *tsd, tcache_t *tcache, cache_bin_t *cache_bin,
     szind_t binind, unsigned rem) {
+	/* Debug: scan for duplicates in the tcache bin before flushing. */
+	{
+		cache_bin_sz_t ncached =
+		    cache_bin_ncached_get_local(cache_bin);
+		void **head = cache_bin->stack_head;
+		for (cache_bin_sz_t i = 0; i < ncached; i++) {
+			for (cache_bin_sz_t j = i + 1; j < ncached; j++) {
+				if (unlikely(head[i] == head[j])) {
+					safety_check_fail(
+					    "tcache_bin_flush_small: "
+					    "duplicate ptr %p at positions "
+					    "%u and %u (binind %u, "
+					    "ncached %u)\n",
+					    head[i], (unsigned)i,
+					    (unsigned)j, binind,
+					    (unsigned)ncached);
+				}
+			}
+		}
+	}
+
 	tcache_nfill_small_burst_reset(tcache->tcache_slow, binind);
 	tcache_bin_flush_bottom(tsd, tcache, cache_bin, binind, rem,
 	    /* small */ true);
