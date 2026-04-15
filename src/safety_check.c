@@ -161,7 +161,7 @@ tcache_bt_print(const char *label, tcache_bt_entry_t *entry) {
  * Called after every tcache push to record the backtrace and check
  * for duplicates.
  */
-JEMALLOC_NOINLINE void
+void
 tcache_debug_check_bin_after_push(void **stack_head, unsigned ncached,
     void *ptr) {
 	/* Check for duplicate in the bin. */
@@ -203,7 +203,7 @@ tcache_debug_check_bin_after_push(void **stack_head, unsigned ncached,
  * Called when a pointer is popped from tcache (allocation).
  * Removes the backtrace record so it can be re-recorded on next push.
  */
-JEMALLOC_NOINLINE void
+void
 tcache_debug_on_pop(void *ptr) {
 	if (ptr != NULL) {
 		tcache_bt_remove(ptr);
