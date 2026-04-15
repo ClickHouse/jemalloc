@@ -333,7 +333,14 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 
 #ifdef BITMAP_USE_TREE
 	i = binfo->nlevels - 1;
-	g = bitmap[binfo->levels[i].group_offset];
+	/*
+	 * Use volatile reads to prevent LTO from hoisting/caching bitmap
+	 * loads across iterations when bitmap_sfu is called in a loop
+	 * (e.g. bin_slab_reg_alloc_batch). Without volatile, the compiler
+	 * may reuse a stale bitmap value from before bitmap_set's store,
+	 * causing the same bit to be returned twice.
+	 */
+	g = *(volatile bitmap_t *)&bitmap[binfo->levels[i].group_offset];
 	if (unlikely(g == 0)) {
 		safety_check_fail(
 		    "bitmap_sfu: tree root is zero (bitmap full), "
@@ -342,7 +349,8 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 	bit = ffs_lu(g);
 	while (i > 0) {
 		i--;
-		g = bitmap[binfo->levels[i].group_offset + bit];
+		g = *(volatile bitmap_t *)&bitmap[
+		    binfo->levels[i].group_offset + bit];
 		if (unlikely(g == 0)) {
 			safety_check_fail(
 			    "bitmap_sfu: tree level %u group is zero "
@@ -353,7 +361,7 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 	}
 #else
 	i = 0;
-	g = bitmap[0];
+	g = *(volatile bitmap_t *)&bitmap[0];
 	while (g == 0) {
 		i++;
 		if (unlikely(i >= BITMAP_BITS2GROUPS(binfo->nbits))) {
@@ -361,7 +369,7 @@ bitmap_sfu(bitmap_t *bitmap, const bitmap_info_t *binfo) {
 			    "bitmap_sfu: all %u groups are zero "
 			    "(bitmap full)\n", i);
 		}
-		g = bitmap[i];
+		g = *(volatile bitmap_t *)&bitmap[i];
 	}
 	bit = (i << LG_BITMAP_GROUP_NBITS) + ffs_lu(g);
 #endif
