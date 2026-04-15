@@ -29,18 +29,31 @@ bin_slab_regind_impl(
 	size_t diff, regind;
 
 	/* Freeing a pointer outside the slab can cause assertion failure. */
-	assert((uintptr_t)ptr >= (uintptr_t)edata_addr_get(slab));
-	assert((uintptr_t)ptr < (uintptr_t)edata_past_get(slab));
-	/* Freeing an interior pointer can cause assertion failure. */
-	assert(((uintptr_t)ptr - (uintptr_t)edata_addr_get(slab))
-	        % (uintptr_t)bin_infos[binind].reg_size
-	    == 0);
+	if (unlikely((uintptr_t)ptr < (uintptr_t)edata_addr_get(slab)
+	    || (uintptr_t)ptr >= (uintptr_t)edata_past_get(slab))) {
+		safety_check_fail(
+		    "bin_slab_regind: ptr %p outside slab [%p, %p)\n",
+		    ptr, edata_addr_get(slab), edata_past_get(slab));
+	}
 
 	diff = (size_t)((uintptr_t)ptr - (uintptr_t)edata_addr_get(slab));
 
+	if (unlikely(diff % (uintptr_t)bin_infos[binind].reg_size != 0)) {
+		safety_check_fail(
+		    "bin_slab_regind: ptr %p not aligned to reg_size "
+		    "%zu (diff=%zu)\n",
+		    ptr, bin_infos[binind].reg_size, diff);
+	}
+
 	/* Avoid doing division with a variable divisor. */
 	regind = div_compute(div_info, diff);
-	assert(regind < bin_infos[binind].nregs);
+
+	if (unlikely(regind >= bin_infos[binind].nregs)) {
+		safety_check_fail(
+		    "bin_slab_regind: regind %zu >= nregs %u for "
+		    "binind %u\n",
+		    regind, bin_infos[binind].nregs, binind);
+	}
 	return regind;
 }
 

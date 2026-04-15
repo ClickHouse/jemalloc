@@ -3,6 +3,7 @@
 
 #include "jemalloc/internal/jemalloc_preamble.h"
 #include "jemalloc/internal/assert.h"
+#include "jemalloc/internal/safety_check.h"
 
 /*
  * This module does the division that computes the index of a region in a slab,
@@ -25,7 +26,10 @@ void div_init(div_info_t *div_info, size_t divisor);
 
 static inline size_t
 div_compute(div_info_t *div_info, size_t n) {
-	assert(n <= (uint32_t)-1);
+	if (unlikely(n > (uint32_t)-1)) {
+		safety_check_fail(
+		    "div_compute: n=%zu exceeds uint32 range\n", n);
+	}
 	/*
 	 * This generates, e.g. mov; imul; shr on x86-64. On a 32-bit machine,
 	 * the compilers I tried were all smart enough to turn this into the
@@ -33,9 +37,6 @@ div_compute(div_info_t *div_info, size_t n) {
 	 * mul; mov edx eax; on x86, umull on arm, etc.).
 	 */
 	size_t i = ((uint64_t)n * (uint64_t)div_info->magic) >> 32;
-#ifdef JEMALLOC_DEBUG
-	assert(i * div_info->d == n);
-#endif
 	return i;
 }
 
