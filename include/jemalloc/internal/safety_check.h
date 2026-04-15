@@ -16,11 +16,12 @@ typedef void (*safety_check_abort_hook_t)(const char *message);
 /* Can set to NULL for a default. */
 void safety_check_set_abort(safety_check_abort_hook_t abort_fn);
 
-/* Debug: scan tcache bin for duplicate after push, record backtrace. */
-void tcache_debug_check_bin_after_push(
-    void **stack_head, unsigned ncached, void *ptr);
-/* Debug: remove backtrace record when pointer is popped from tcache. */
+/* Debug: record backtrace on tcache push. */
+void tcache_debug_bt_record(void *ptr);
+/* Debug: remove backtrace record on tcache pop. */
 void tcache_debug_on_pop(void *ptr);
+/* Debug: scan for duplicates during tcache flush, print backtraces. */
+void tcache_debug_check_flush(void **ptrs, unsigned nflush);
 
 #define REDZONE_SIZE ((size_t)32)
 #define REDZONE_FILL_VALUE 0xBC

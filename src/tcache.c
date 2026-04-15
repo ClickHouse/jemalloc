@@ -664,6 +664,10 @@ tcache_bin_flush_bottom(tsd_t *tsd, tcache_t *tcache, cache_bin_t *cache_bin,
 void
 tcache_bin_flush_small(tsd_t *tsd, tcache_t *tcache, cache_bin_t *cache_bin,
     szind_t binind, unsigned rem) {
+	/* Debug: scan entire bin for duplicates before flush. */
+	cache_bin_sz_t ncached = cache_bin_ncached_get_local(cache_bin);
+	tcache_debug_check_flush(cache_bin->stack_head, ncached);
+
 	tcache_nfill_small_burst_reset(tcache->tcache_slow, binind);
 	tcache_bin_flush_bottom(tsd, tcache, cache_bin, binind, rem,
 	    /* small */ true);

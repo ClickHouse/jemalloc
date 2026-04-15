@@ -158,54 +158,57 @@ tcache_bt_print(const char *label, tcache_bt_entry_t *entry) {
 }
 
 /*
- * Called after every tcache push to record the backtrace and check
- * for duplicates.
+ * Record backtrace on every tcache push. Inlineable by LTO — just a
+ * hash table insert, no scan, no barrier effect.
  */
 void
-tcache_debug_check_bin_after_push(void **stack_head, unsigned ncached,
-    void *ptr) {
-	/* Check for duplicate in the bin. */
-	for (unsigned i = 1; i < ncached; i++) {
-		if (stack_head[i] == ptr) {
-			char buf[256];
-			malloc_snprintf(buf, sizeof(buf),
-			    "tcache duplicate on push: ptr %p at "
-			    "position %u (ncached %u)\n",
-			    ptr, i, ncached);
-			malloc_write(buf);
-
-			/* Print the original push backtrace. */
-			tcache_bt_entry_t *orig = tcache_bt_find(ptr);
-			if (orig != NULL) {
-				tcache_bt_print("ORIGINAL push", orig);
-			} else {
-				malloc_write("  (original backtrace "
-				    "not found)\n");
-			}
-
-			/* Print current backtrace. */
-			tcache_bt_entry_t current;
-			current.nframes = backtrace(
-			    current.frames, TCACHE_BT_FRAMES);
-			tcache_bt_print("DUPLICATE push", &current);
-
-			safety_check_fail(
-			    "tcache duplicate detected: ptr %p\n", ptr);
-			return;
-		}
-	}
-
-	/* No duplicate — record this push. */
+tcache_debug_bt_record(void *ptr) {
 	tcache_bt_record(ptr);
 }
 
 /*
- * Called when a pointer is popped from tcache (allocation).
- * Removes the backtrace record so it can be re-recorded on next push.
+ * Remove backtrace record on tcache pop. Inlineable by LTO.
  */
 void
 tcache_debug_on_pop(void *ptr) {
 	if (ptr != NULL) {
 		tcache_bt_remove(ptr);
+	}
+}
+
+/*
+ * Called during tcache flush to scan for duplicates.
+ * This runs in tcache.c (not inlined into callers), so it won't
+ * affect LTO optimization of the push/pop fast paths.
+ */
+void
+tcache_debug_check_flush(void **ptrs, unsigned nflush) {
+	for (unsigned i = 0; i < nflush; i++) {
+		for (unsigned j = i + 1; j < nflush; j++) {
+			if (ptrs[i] == ptrs[j]) {
+				char buf[256];
+				malloc_snprintf(buf, sizeof(buf),
+				    "tcache duplicate in flush: ptr %p "
+				    "at positions %u and %u "
+				    "(nflush %u)\n",
+				    ptrs[i], i, j, nflush);
+				malloc_write(buf);
+
+				/* Print first push backtrace. */
+				tcache_bt_entry_t *orig =
+				    tcache_bt_find(ptrs[i]);
+				if (orig != NULL) {
+					tcache_bt_print("push", orig);
+				} else {
+					malloc_write(
+					    "  (backtrace not found)\n");
+				}
+
+				safety_check_fail(
+				    "tcache duplicate: ptr %p\n",
+				    ptrs[i]);
+				return;
+			}
+		}
 	}
 }
