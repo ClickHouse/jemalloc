@@ -723,8 +723,15 @@ static inline void
 cache_bin_finish_flush(
     cache_bin_t *bin, cache_bin_ptr_array_t *arr, cache_bin_sz_t nflushed) {
 	unsigned rem = cache_bin_ncached_get_local(bin) - nflushed;
-	memmove(
-	    bin->stack_head + nflushed, bin->stack_head, rem * sizeof(void *));
+	/*
+	 * Use volatile pointers to prevent LTO from optimizing this
+	 * memmove based on built-in memcpy/memmove/memset knowledge.
+	 * Misoptimization here can leave stale flushed pointers in the
+	 * bin, causing duplicate allocations.
+	 */
+	volatile void *dst = bin->stack_head + nflushed;
+	volatile void *src = bin->stack_head;
+	memmove((void *)dst, (void *)src, rem * sizeof(void *));
 	bin->stack_head += nflushed;
 	cache_bin_low_water_adjust(bin);
 	/* Reset the bin stats as it's merged during flush. */
