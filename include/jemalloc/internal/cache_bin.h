@@ -403,20 +403,6 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	if (likely(low_bits != bin->low_bits_low_water)) {
 		bin->stack_head = new_head;
 		*success = true;
-		/* Check for duplicate: ret should not still be in the bin. */
-		{
-			cache_bin_sz_t remain =
-			    cache_bin_ncached_get_internal(bin);
-			unsigned scan = remain < 200 ? remain : 200;
-			for (unsigned di = 0; di < scan; di++) {
-				if (unlikely(new_head[di] == ret)) {
-					safety_check_fail(
-					    "tcache alloc returned duplicate "
-					    "ptr %p (also at pos %u)\n",
-					    ret, di);
-				}
-			}
-		}
 		return ret;
 	}
 	if (!adjust_low_water) {
@@ -486,7 +472,26 @@ cache_bin_full(cache_bin_t *bin) {
  */
 JEMALLOC_ALWAYS_INLINE bool
 cache_bin_dalloc_safety_checks(cache_bin_t *bin, void *ptr) {
-	/* Disabled for test — checking if alloc-side scan alone prevents crash. */
+	if (!config_debug || opt_debug_double_free_max_scan == 0) {
+		return false;
+	}
+
+	cache_bin_sz_t ncached = cache_bin_ncached_get_internal(bin);
+	unsigned       max_scan = opt_debug_double_free_max_scan < ncached
+	          ? opt_debug_double_free_max_scan
+	          : ncached;
+
+	void **cur = bin->stack_head;
+	void **limit = cur + max_scan;
+	for (; cur < limit; cur++) {
+		if (*cur == ptr) {
+			safety_check_fail(
+			    "Invalid deallocation detected: double free of "
+			    "pointer %p\n",
+			    ptr);
+			return true;
+		}
+	}
 	return false;
 }
 
@@ -509,9 +514,10 @@ cache_bin_dalloc_easy(cache_bin_t *bin, void *ptr) {
 	    (cache_bin_sz_t)(uintptr_t)bin->stack_head);
 
 	/* Verify the store survived optimization — volatile forces the read. */
-	if (unlikely(*(void * volatile *)bin->stack_head == NULL)) {
+	if (unlikely(*(void * volatile *)bin->stack_head != ptr)) {
 		safety_check_fail(
-		    "NULL detected in tcache bin after store of %p\n", ptr);
+		    "tcache push store lost: wrote %p, read back %p\n",
+		    ptr, *bin->stack_head);
 	}
 
 	return true;
