@@ -403,6 +403,20 @@ cache_bin_alloc_impl(cache_bin_t *bin, bool *success, bool adjust_low_water) {
 	if (likely(low_bits != bin->low_bits_low_water)) {
 		bin->stack_head = new_head;
 		*success = true;
+		/* Check for duplicate: ret should not still be in the bin. */
+		{
+			cache_bin_sz_t remain =
+			    cache_bin_ncached_get_internal(bin);
+			unsigned scan = remain < 200 ? remain : 200;
+			for (unsigned di = 0; di < scan; di++) {
+				if (unlikely(new_head[di] == ret)) {
+					safety_check_fail(
+					    "tcache alloc returned duplicate "
+					    "ptr %p (also at pos %u)\n",
+					    ret, di);
+				}
+			}
+		}
 		return ret;
 	}
 	if (!adjust_low_water) {
@@ -472,24 +486,7 @@ cache_bin_full(cache_bin_t *bin) {
  */
 JEMALLOC_ALWAYS_INLINE bool
 cache_bin_dalloc_safety_checks(cache_bin_t *bin, void *ptr) {
-	/*
-	 * Force-enabled double-free scan to debug LTO miscompilation
-	 * that causes the same pointer to appear in a tcache bin twice.
-	 */
-	cache_bin_sz_t ncached = cache_bin_ncached_get_internal(bin);
-	unsigned max_scan = ncached < 200 ? ncached : 200;
-
-	void **cur = bin->stack_head;
-	void **limit = cur + max_scan;
-	for (; cur < limit; cur++) {
-		if (*cur == ptr) {
-			safety_check_fail(
-			    "Invalid deallocation detected: double free of "
-			    "pointer %p (found at position %zu in tcache)\n",
-			    ptr, (size_t)(cur - bin->stack_head));
-			return true;
-		}
-	}
+	/* Disabled for test — checking if alloc-side scan alone prevents crash. */
 	return false;
 }
 
