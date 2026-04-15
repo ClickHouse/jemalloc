@@ -51,3 +51,24 @@ safety_check_fail(const char *format, ...) {
 	safety_check_detected_heap_corruption___run_address_sanitizer_build_to_debug(
 	    buf);
 }
+
+/*
+ * Debug: scan the tcache bin for duplicate pointers after a push.
+ * noinline so LTO cannot optimize through this call — it must remain
+ * an opaque barrier to prevent the optimizer from reordering/merging
+ * the tcache push with surrounding code.
+ */
+JEMALLOC_NOINLINE void
+tcache_debug_check_bin_after_push(void **stack_head, unsigned ncached,
+    void *ptr) {
+	for (unsigned i = 1; i < ncached; i++) {
+		if (stack_head[i] == ptr) {
+			safety_check_fail(
+			    "tcache duplicate detected on push: "
+			    "ptr %p already at position %u "
+			    "(ncached %u)\n",
+			    ptr, i, ncached);
+			return;
+		}
+	}
+}
