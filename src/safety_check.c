@@ -73,7 +73,7 @@ typedef struct {
 
 static __thread tcache_bt_entry_t *tcache_bt_table;
 
-static void
+void
 tcache_bt_ensure_table(void) {
 	if (likely(tcache_bt_table != NULL)) {
 		return;
@@ -95,8 +95,6 @@ tcache_bt_hash(void *ptr) {
 
 static void
 tcache_bt_record(void *ptr) {
-	tcache_bt_ensure_table();
-	if (tcache_bt_table == MAP_FAILED) return;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
 		unsigned slot = (idx + i) & TCACHE_BT_TABLE_MASK;
@@ -112,7 +110,6 @@ tcache_bt_record(void *ptr) {
 
 static tcache_bt_entry_t *
 tcache_bt_find(void *ptr) {
-	if (tcache_bt_table == NULL || tcache_bt_table == MAP_FAILED)
 		return NULL;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
@@ -129,8 +126,6 @@ tcache_bt_find(void *ptr) {
 
 static void
 tcache_bt_remove(void *ptr) {
-	if (tcache_bt_table == NULL || tcache_bt_table == MAP_FAILED)
-		return;
 	unsigned idx = tcache_bt_hash(ptr);
 	for (unsigned i = 0; i < 64; i++) {
 		unsigned slot = (idx + i) & TCACHE_BT_TABLE_MASK;

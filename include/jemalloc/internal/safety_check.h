@@ -16,6 +16,8 @@ typedef void (*safety_check_abort_hook_t)(const char *message);
 /* Can set to NULL for a default. */
 void safety_check_set_abort(safety_check_abort_hook_t abort_fn);
 
+/* Debug: pre-allocate backtrace table (call from tcache_init). */
+void tcache_bt_ensure_table(void);
 /* Debug: record backtrace on tcache push. */
 void tcache_debug_bt_record(void *ptr);
 /* Debug: remove backtrace record on tcache pop. */
