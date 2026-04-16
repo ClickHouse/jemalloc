@@ -171,7 +171,7 @@ JEMALLOC_ALWAYS_INLINE bool
 emap_edata_is_acquired(tsdn_t *tsdn, emap_t *emap, edata_t *edata) {
 	if (!config_debug) {
 		/* For assertions only. */
-		return false;
+		return true;
 	}
 
 	/*
