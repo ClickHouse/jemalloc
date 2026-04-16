@@ -2063,6 +2063,9 @@ arena_init_huge(tsdn_t *tsdn, arena_t *a0) {
 	    || opt_oversize_threshold < SC_LARGE_MINCLASS) {
 		opt_oversize_threshold = 0;
 		oversize_threshold = SC_LARGE_MAXCLASS + PAGE;
+		/* a0 was created before conf init with the default threshold. */
+		atomic_store_zu(&a0->pa_shard.pac.oversize_threshold,
+		    oversize_threshold, ATOMIC_RELAXED);
 		huge_enabled = false;
 	} else {
 		/* Reserve the index for the huge arena. */
