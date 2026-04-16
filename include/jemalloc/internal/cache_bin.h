@@ -510,8 +510,6 @@ cache_bin_dalloc_easy(cache_bin_t *bin, void *ptr) {
 	cache_bin_assert_earlier(bin, bin->low_bits_full,
 	    (cache_bin_sz_t)(uintptr_t)bin->stack_head);
 
-	tcache_debug_bt_record(ptr);
-
 	return true;
 }
 
