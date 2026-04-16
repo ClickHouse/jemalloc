@@ -202,6 +202,12 @@ tcache_dalloc_small(
 		cache_bin_sz_t max = cache_bin_ncached_max_get(bin);
 		unsigned       remain = max >> opt_lg_tcache_flush_small_div;
 		tcache_bin_flush_small(tsd, tcache, bin, binind, remain);
+		/*
+		 * Compiler barrier: force reload of bin->stack_head after
+		 * flush. Without this, LTO may cache stack_head from before
+		 * the flush and use a stale value in the second dalloc_easy.
+		 */
+		__asm__ volatile("" : "+m"(*bin));
 		bool ret = cache_bin_dalloc_easy(bin, ptr);
 		assert(ret);
 	}
