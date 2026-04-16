@@ -621,6 +621,24 @@ tcache_alloc_small_hard(tsdn_t *tsdn, arena_t *arena, tcache_t *tcache,
 	assert(filled >= nfill_min && filled <= nfill_max);
 	assert(cache_bin_ncached_get_local(cache_bin) == filled);
 
+	/* Debug: scan refilled bin for duplicate pointers. */
+	{
+		void **head = cache_bin->stack_head;
+		for (cache_bin_sz_t di = 0; di < filled; di++) {
+			for (cache_bin_sz_t dj = di + 1; dj < filled; dj++) {
+				if (head[di] == head[dj]) {
+					safety_check_fail(
+					    "tcache refill duplicate: "
+					    "ptr %p at %u and %u "
+					    "(binind %u filled %u)\n",
+					    head[di], (unsigned)di,
+					    (unsigned)dj, binind,
+					    (unsigned)filled);
+				}
+			}
+		}
+	}
+
 	tcache_slow->bin_refilled[binind] = true;
 	tcache_nfill_small_burst_prepare(tcache_slow, binind);
 	ret = cache_bin_alloc(cache_bin, tcache_success);
