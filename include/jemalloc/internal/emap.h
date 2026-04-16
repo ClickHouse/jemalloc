@@ -157,7 +157,6 @@ emap_assert_not_mapped(tsdn_t *tsdn, emap_t *emap, edata_t *edata) {
 
 JEMALLOC_ALWAYS_INLINE bool
 emap_edata_in_transition(tsdn_t *tsdn, emap_t *emap, edata_t *edata) {
-	assert(config_debug);
 	emap_assert_mapped(tsdn, emap, edata);
 
 	EMAP_DECLARE_RTREE_CTX;
