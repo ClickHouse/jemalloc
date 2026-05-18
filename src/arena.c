@@ -1961,10 +1961,21 @@ arena_init_huge(tsdn_t *tsdn, arena_t *a0) {
 		base_t *b0 = a0->base;
 		/* Make sure that b0 thp auto-switch won't happen concurrently here. */
 		malloc_mutex_lock(tsdn, &b0->mtx);
-		(&huge_arena_pac_thp)->thp_madvise = opt_huge_arena_pac_thp
-		    && metadata_thp_enabled()
-		    && (opt_thp == thp_mode_do_nothing)
-		    && (init_system_thp_mode == system_thp_mode_madvise);
+		/*
+		 * Diagnostic + experiment: force `thp_madvise` to follow only
+		 * `opt_huge_arena_pac_thp`, bypassing the usual gating on
+		 * `metadata_thp_enabled` / `opt_thp` / `init_system_thp_mode`.
+		 * Print the resolved inputs so we can see, in CI logs, why the
+		 * THP path may or may not have been engaging before.
+		 */
+		malloc_printf("<jemalloc>: huge_arena_pac_thp diagnostic: "
+		    "opt_huge_arena_pac_thp=%d metadata_thp_enabled=%d "
+		    "opt_thp=%d init_system_thp_mode=%d\n",
+		    (int)opt_huge_arena_pac_thp,
+		    (int)metadata_thp_enabled(),
+		    (int)opt_thp,
+		    (int)init_system_thp_mode);
+		(&huge_arena_pac_thp)->thp_madvise = opt_huge_arena_pac_thp;
 		(&huge_arena_pac_thp)->auto_thp_switched =
 		    b0->auto_thp_switched;
 		malloc_mutex_init(&(&huge_arena_pac_thp)->lock, "pac_thp",
