@@ -1173,6 +1173,25 @@ if test "$enable_shared$enable_static" = "00" ; then
   AC_MSG_ERROR([Please enable one of shared or static builds])
 fi
 
+dnl Whether ucontext fibers (getcontext/makecontext/swapcontext) actually link.
+dnl musl declares them in <ucontext.h> but exports no implementation, so a
+dnl link test is required -- a header check would pass and then fail to link.
+dnl Used to gate the tcache_fiber_migration test.
+JE_COMPILABLE([ucontext], [
+#include <ucontext.h>
+], [
+	ucontext_t uc, ret;
+	getcontext(&uc);
+	makecontext(&uc, (void (*)(void))0, 0);
+	swapcontext(&ret, &uc);
+], [je_cv_ucontext])
+if test "x${je_cv_ucontext}" = "xyes" ; then
+  have_ucontext="1"
+else
+  have_ucontext="0"
+fi
+AC_SUBST([have_ucontext])
+
 dnl Perform no name mangling by default.
 AC_ARG_WITH([mangling],
   [AS_HELP_STRING([--with-mangling=<map>], [Mangle symbols in <map>])],
@@ -2775,6 +2794,8 @@ if test "x${je_cv_tls_model}" = "xyes" -a \
   AC_DEFINE([JEMALLOC_TLS_MODEL],
             [__attribute__((tls_model("initial-exec")))],
             [ ])
+  AC_DEFINE([JEMALLOC_TLS_MODEL_INITIAL_EXEC], [ ],
+            [Defined when the TSD thread-locals use the initial-exec (static) TLS model, i.e. live at a fixed offset from the thread pointer.])
 else
   AC_DEFINE([JEMALLOC_TLS_MODEL], [ ], [ ])
 fi
