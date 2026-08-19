@@ -197,6 +197,7 @@ prof_malloc_sample_object(
 	    tsd_tsdn(tsd), &arena_emap_global, ptr);
 	prof_info_set(
 	    tsd, edata, tctx, size, unbiased_bytes, shifted_unbiased_cnt);
+	prof_frag_track(tsd, edata, tctx);
 
 	malloc_mutex_lock(tsd_tsdn(tsd), tctx->tdata->lock);
 	uint64_t weighted_size = prof_sample_weighted_size(

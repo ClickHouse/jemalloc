@@ -8,6 +8,7 @@
 #include "jemalloc/internal/large.h"
 #include "jemalloc/internal/mutex.h"
 #include "jemalloc/internal/prof.h"
+#include "jemalloc/internal/prof_data.h"
 #include "jemalloc/internal/prof_inlines.h"
 #include "jemalloc/internal/prof_recent.h"
 #include "jemalloc/internal/util.h"
@@ -285,6 +286,7 @@ large_prof_info_get(
 		prof_info->shifted_unbiased_cnt =
 		    edata_prof_shifted_unbiased_cnt_get(edata);
 		if (reset_recent) {
+			prof_frag_untrack(tsd, edata, alloc_tctx);
 			/*
 			 * Reset the pointer on the recent allocation record,
 			 * so that this allocation is recorded as released.
@@ -314,5 +316,11 @@ large_prof_info_set(edata_t *edata, prof_tctx_t *tctx, size_t size,
 	edata_prof_recent_alloc_init(edata);
 	edata_prof_unbiased_size_set(edata, unbiased_size);
 	edata_prof_shifted_unbiased_cnt_set(edata, shifted_unbiased_cnt);
+	/*
+	 * The flag may hold garbage from a previous (slab) use of this edata;
+	 * it must be cleared before the tctx is published below, which is what
+	 * makes the allocation reachable by prof_frag_untrack().
+	 */
+	edata_prof_frag_tracked_set(edata, false);
 	large_prof_tctx_set(edata, tctx);
 }
