@@ -2,14 +2,15 @@
  * Regression test for issue #2890: under whole-program LTO the inlined allocator
  * fastpath caches the TLS-derived tcache base in a register across a
  * swapcontext, so a fiber resumed on another OS thread uses the previous
- * thread's tcache -> heap corruption.  See JEMALLOC_TLS_ADDR in tsd_internals.h.
+ * thread's tcache -> heap corruption.  See JEMALLOC_TLS_ADDR in tsd_tls_addr.h.
  *
  * Standalone (no test harness, so it can be static-linked), calling jemalloc via
  * JEMALLOC_MANGLE -- it rewrites malloc/free to jemalloc's configured-prefix
  * symbols, so the calls bind to and inline the static allocator, not libc's
  * wrappers.  Reproduces only with the allocator inlined next to the swapcontext
  * (a static --whole-archive link plus whole-program LTO), so the Makefile builds
- * it only when -flto is in the build flags.
+ * it only when -flto is in the build flags and --enable-experimental-fiber-safe-tls
+ * (the mitigation under test) is on.
  */
 #include <pthread.h>
 #include <stdbool.h>

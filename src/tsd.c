@@ -1,4 +1,4 @@
-/* Emit the single out-of-line JEMALLOC_TLS_ADDR offset globals/helpers here. */
+/* JEMALLOC_TLS_ADDR definitions here. */
 #define JEMALLOC_TSD_C_
 
 #include "jemalloc/internal/jemalloc_preamble.h"

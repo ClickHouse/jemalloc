@@ -633,13 +633,9 @@ def generate_freebsd_job(arch):
 
 
 def generate_linux_lto_job():
-    """Dedicated lane: whole-program ThinLTO + the je_ public prefix, statically
-    linked.  This is the configuration under which the tcache_fiber_migration
-    reproducer (issue #2890) actually exercises the bug -- the allocator
-    fastpath must be inlined next to the swapcontext, which only happens with
-    static linking under LTO.  llvm-ar/nm/ranlib are needed to archive the LTO
-    bitcode; -fuse-ld=lld to link it."""
-    return """  test-linux-lto:
+    """Dedicated lane for --enable-experimental-fiber-safe-tls (that requires
+    LTO, je_ prefix and --enable-experimental-fiber-safe-tls)"""
+    return """  test-linux-lto-fiber-safe-tls:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
@@ -649,11 +645,12 @@ def generate_linux_lto_job():
         sudo apt-get update
         sudo apt-get install -y clang lld llvm
 
-    - name: Build and test (whole-program ThinLTO, je_ prefix)
+    - name: Build and test (LTO, je_ prefix, fiber-safe TLS)
       run: |
         autoconf
         CC=clang AR=llvm-ar NM=llvm-nm RANLIB=llvm-ranlib \\
-          ./configure --with-jemalloc-prefix=je_ EXTRA_CFLAGS=-flto=thin
+          ./configure --enable-experimental-fiber-safe-tls \\
+            --with-jemalloc-prefix=je_ EXTRA_CFLAGS=-flto=thin
         make -j3 EXTRA_LDFLAGS="-flto=thin -fuse-ld=lld"
         make -j3 tests EXTRA_LDFLAGS="-flto=thin -fuse-ld=lld"
         make check
