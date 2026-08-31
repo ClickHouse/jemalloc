@@ -1454,6 +1454,24 @@ if test "x$enable_experimental_smallocx" = "x1" ; then
 fi
 AC_SUBST([enable_experimental_smallocx])
 
+dnl Do not enable fiber-safe TLS access by default.
+AC_ARG_ENABLE([experimental_fiber_safe_tls],
+  [AS_HELP_STRING([--enable-experimental-fiber-safe-tls],
+                  [Make jemalloc's own TLS access safe for fibers that migrate across threads (partial mitigation; see INSTALL.md)])],
+[if test "x$enable_experimental_fiber_safe_tls" = "xno" ; then
+enable_experimental_fiber_safe_tls="0"
+else
+enable_experimental_fiber_safe_tls="1"
+fi
+],
+[enable_experimental_fiber_safe_tls="0"]
+)
+if test "x$enable_experimental_fiber_safe_tls" = "x1" ; then
+  AC_DEFINE([JEMALLOC_EXPERIMENTAL_FIBER_SAFE_TLS], [ ],
+            [Route TSD thread-local address computation through a noinline optimization-barrier accessor so the compiler cannot cache it across a user-space context switch.])
+fi
+AC_SUBST([enable_experimental_fiber_safe_tls])
+
 dnl Do not enable profiling by default.
 AC_ARG_ENABLE([prof],
   [AS_HELP_STRING([--enable-prof], [Enable allocation profiling])],
@@ -3098,6 +3116,7 @@ AC_MSG_RESULT([debug              : ${enable_debug}])
 AC_MSG_RESULT([stats              : ${enable_stats}])
 AC_MSG_RESULT([user_config        : ${enable_user_config}])
 AC_MSG_RESULT([experimental_smallocx : ${enable_experimental_smallocx}])
+AC_MSG_RESULT([experimental_fiber_safe_tls : ${enable_experimental_fiber_safe_tls}])
 AC_MSG_RESULT([prof               : ${enable_prof}])
 AC_MSG_RESULT([prof-libunwind     : ${enable_prof_libunwind}])
 AC_MSG_RESULT([prof-frameptr      : ${enable_prof_frameptr}])
