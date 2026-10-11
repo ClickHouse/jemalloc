@@ -1,5 +1,7 @@
 #include "test/jemalloc_test.h"
 
+#include "jemalloc/internal/prof_sys.h"
+
 static void
 mallctl_thread_name_get_impl(
     const char *thread_name_expected, const char *func, int line) {
@@ -123,8 +125,123 @@ TEST_BEGIN(test_prof_thread_name_threaded) {
 }
 TEST_END
 
+#define DUMP_BUF_SIZE (1u << 20)
+static char   dump_buf[DUMP_BUF_SIZE];
+static size_t dump_len;
+
+static int
+prof_dump_open_file_intercept(const char *filename, int mode) {
+	int fd = open("/dev/null", O_WRONLY);
+	assert_d_ne(fd, -1, "Unexpected open() failure");
+	return fd;
+}
+
+static ssize_t
+prof_dump_write_file_intercept(int fd, const void *s, size_t len) {
+	assert_zu_lt(dump_len + len, DUMP_BUF_SIZE, "Dump capture overflow");
+	memcpy(&dump_buf[dump_len], s, len);
+	dump_len += len;
+	return (ssize_t)len;
+}
+
+static atomic_u_t renamers_ready;
+static atomic_b_t renamers_stop;
+
+static void *
+thd_rename_start(void *varg) {
+	const char *names[] = {"aaaaaaaaaaaaaaa", "b"};
+	size_t      mib[3];
+	size_t      miblen = sizeof(mib) / sizeof(mib[0]);
+	expect_d_eq(mallctlnametomib("thread.prof.name", mib, &miblen), 0,
+	    "Unexpected mallctlnametomib failure");
+	for (unsigned i = 0; !atomic_load_b(&renamers_stop, ATOMIC_ACQUIRE);
+	     i++) {
+		expect_d_eq(mallctlbymib(mib, miblen, NULL, NULL,
+		                (void *)&names[i % 2], sizeof(const char *)),
+		    0, "Unexpected mallctl failure writing thread.prof.name");
+		if (i == 0) {
+			atomic_fetch_add_u(&renamers_ready, 1, ATOMIC_RELEASE);
+		}
+	}
+	return NULL;
+}
+
+/* The dump is complete and has one well-formed named line per renamer. */
+static bool
+dump_is_intact(unsigned nrenamers) {
+	if (dump_len == 0 || dump_buf[dump_len - 1] != '\n'
+	    || strstr(dump_buf, "\nMAPPED_LIBRARIES:\n") == NULL) {
+		return false;
+	}
+	unsigned named = 0;
+	for (const char *line = strstr(dump_buf, "\n  t"); line != NULL;
+	     line = strstr(line + 1, "\n  t")) {
+		const char *eol = strchr(line + 1, '\n');
+		const char *p = memchr(line, ']', (size_t)(eol - line));
+		if (p == NULL) {
+			return false;
+		}
+		if (p + 1 == eol) {
+			continue;
+		}
+		size_t n = strspn(p + 2, "ab");
+		if (p[1] != ' ' || n == 0 || p + 2 + n != eol) {
+			return false;
+		}
+		named++;
+	}
+	return named == nrenamers;
+}
+
+TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
+	test_skip_if(!config_prof);
+	test_skip_if(opt_prof_sys_thread_name);
+
+#define NTHREADS 8
+#define NDUMPS 1000
+	prof_dump_open_file_t  *open_file_orig = prof_dump_open_file;
+	prof_dump_write_file_t *write_file_orig = prof_dump_write_file;
+	prof_dump_open_file = prof_dump_open_file_intercept;
+	prof_dump_write_file = prof_dump_write_file_intercept;
+
+	thd_t thds[NTHREADS];
+	atomic_store_u(&renamers_ready, 0, ATOMIC_RELAXED);
+	atomic_store_b(&renamers_stop, false, ATOMIC_RELAXED);
+	for (unsigned i = 0; i < NTHREADS; i++) {
+		thd_create(&thds[i], thd_rename_start, NULL);
+	}
+	while (atomic_load_u(&renamers_ready, ATOMIC_ACQUIRE) < NTHREADS) {
+	}
+
+	const char *filename = "test_filename";
+	unsigned    corrupted = 0;
+	for (unsigned i = 0; i < NDUMPS; i++) {
+		dump_len = 0;
+		expect_d_eq(mallctl("prof.dump", NULL, NULL, (void *)&filename,
+		                sizeof(filename)),
+		    0, "Unexpected mallctl failure during prof.dump");
+		dump_buf[dump_len] = '\0';
+		if (!dump_is_intact(NTHREADS)) {
+			corrupted++;
+		}
+	}
+
+	atomic_store_b(&renamers_stop, true, ATOMIC_RELEASE);
+	for (unsigned i = 0; i < NTHREADS; i++) {
+		thd_join(thds[i], NULL);
+	}
+	prof_dump_open_file = open_file_orig;
+	prof_dump_write_file = write_file_orig;
+	expect_u_eq(corrupted, 0, "%u of %u heap dumps lost data", corrupted,
+	    NDUMPS);
+#undef NDUMPS
+#undef NTHREADS
+}
+TEST_END
+
 int
 main(void) {
-	return test(
-	    test_prof_thread_name_validation, test_prof_thread_name_threaded);
+	return test(test_prof_thread_name_validation,
+	    test_prof_thread_name_threaded,
+	    test_prof_thread_name_dump_concurrent_rename);
 }

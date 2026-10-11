@@ -496,8 +496,10 @@ prof_recent_alloc_dump_node(emitter_t *emitter, prof_recent_t *node) {
 	    &node->alloc_tctx->thr_uid);
 	prof_tdata_t *alloc_tdata = node->alloc_tctx->tdata;
 	assert(alloc_tdata != NULL);
-	if (!prof_thread_name_empty(alloc_tdata)) {
-		const char *thread_name = alloc_tdata->thread_name;
+	char alloc_thread_name[PROF_THREAD_NAME_MAX_LEN];
+	prof_thread_name_snapshot(alloc_tdata, alloc_thread_name);
+	if (alloc_thread_name[0] != '\0') {
+		const char *thread_name = alloc_thread_name;
 		emitter_json_kv(emitter, "alloc_thread_name",
 		    emitter_type_string, &thread_name);
 	}
@@ -513,8 +515,10 @@ prof_recent_alloc_dump_node(emitter_t *emitter, prof_recent_t *node) {
 		    emitter_type_uint64, &node->dalloc_tctx->thr_uid);
 		prof_tdata_t *dalloc_tdata = node->dalloc_tctx->tdata;
 		assert(dalloc_tdata != NULL);
-		if (!prof_thread_name_empty(dalloc_tdata)) {
-			const char *thread_name = dalloc_tdata->thread_name;
+		char dalloc_thread_name[PROF_THREAD_NAME_MAX_LEN];
+		prof_thread_name_snapshot(dalloc_tdata, dalloc_thread_name);
+		if (dalloc_thread_name[0] != '\0') {
+			const char *thread_name = dalloc_thread_name;
 			emitter_json_kv(emitter, "dalloc_thread_name",
 			    emitter_type_string, &thread_name);
 		}

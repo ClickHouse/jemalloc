@@ -293,6 +293,23 @@ prof_thread_name_empty(prof_tdata_t *tdata) {
 	return (tdata->thread_name[0] == '\0');
 }
 
+/* The owner may rename concurrently: read each byte once for a stable copy. */
+JEMALLOC_ALWAYS_INLINE void
+prof_thread_name_snapshot(const prof_tdata_t *tdata, char *buf) {
+	prof_active_assert();
+
+	const volatile char *name = tdata->thread_name;
+	unsigned             i;
+	for (i = 0; i < PROF_THREAD_NAME_MAX_LEN - 1; i++) {
+		char c = name[i];
+		if (c == '\0') {
+			break;
+		}
+		buf[i] = c;
+	}
+	buf[i] = '\0';
+}
+
 JEMALLOC_ALWAYS_INLINE void
 prof_thread_name_clear(prof_tdata_t *tdata) {
 	prof_active_assert();

@@ -972,9 +972,11 @@ prof_tdata_dump_iter(
 	    "  t%" FMTu64 ": ", tdata->thr_uid);
 	prof_dump_print_cnts(
 	    arg->prof_dump_write, arg->cbopaque, &tdata->cnt_summed);
-	if (!prof_thread_name_empty(tdata)) {
+	char thread_name[PROF_THREAD_NAME_MAX_LEN];
+	prof_thread_name_snapshot(tdata, thread_name);
+	if (thread_name[0] != '\0') {
 		arg->prof_dump_write(arg->cbopaque, " ");
-		arg->prof_dump_write(arg->cbopaque, tdata->thread_name);
+		arg->prof_dump_write(arg->cbopaque, thread_name);
 	}
 	arg->prof_dump_write(arg->cbopaque, "\n");
 	return NULL;
