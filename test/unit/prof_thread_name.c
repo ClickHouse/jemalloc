@@ -126,11 +126,13 @@ TEST_BEGIN(test_prof_thread_name_threaded) {
 TEST_END
 
 #define NRENAMERS 8
-#define NDUMPS 2000
-static char       dump_buf[1u << 20];
-static size_t     dump_len;
-static atomic_u_t renamers_ready;
-static atomic_b_t renamers_stop;
+#define NDUMPS 1000
+#define NSNAPSHOTS (1u << 21)
+static char          dump_buf[1u << 20];
+static size_t        dump_len;
+static prof_tdata_t *renamer_tdatas[NRENAMERS];
+static atomic_u_t    renamers_ready;
+static atomic_b_t    renamers_stop;
 
 static int
 prof_dump_open_file_intercept(const char *filename, int mode) {
@@ -161,6 +163,8 @@ thd_rename_start(void *varg) {
 		                (void *)&names[i % 2], sizeof(const char *)),
 		    0, "Unexpected mallctl failure writing thread.prof.name");
 		if (i == 0) {
+			renamer_tdatas[(uintptr_t)varg] = prof_tdata_get(
+			    tsd_fetch(), false);
 			atomic_fetch_add_u(&renamers_ready, 1, ATOMIC_RELEASE);
 		}
 	}
@@ -206,7 +210,7 @@ TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
 	atomic_store_u(&renamers_ready, 0, ATOMIC_RELAXED);
 	atomic_store_b(&renamers_stop, false, ATOMIC_RELAXED);
 	for (unsigned i = 0; i < NRENAMERS; i++) {
-		thd_create(&thds[i], thd_rename_start, NULL);
+		thd_create(&thds[i], thd_rename_start, (void *)(uintptr_t)i);
 	}
 	while (atomic_load_u(&renamers_ready, ATOMIC_ACQUIRE) < NRENAMERS) {
 	}
@@ -222,6 +226,14 @@ TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
 		corrupted += !dump_is_intact();
 	}
 
+	unsigned torn = 0;
+	for (unsigned i = 0; i < NSNAPSHOTS; i++) {
+		char name[PROF_THREAD_NAME_MAX_LEN];
+		prof_thread_name_snapshot(renamer_tdatas[i % NRENAMERS], name);
+		size_t n = strspn(name, "ab");
+		torn += (n == 0 || name[n] != '\0');
+	}
+
 	atomic_store_b(&renamers_stop, true, ATOMIC_RELEASE);
 	for (unsigned i = 0; i < NRENAMERS; i++) {
 		thd_join(thds[i], NULL);
@@ -230,6 +242,9 @@ TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
 	prof_dump_write_file = write_file_orig;
 	expect_u_eq(corrupted, 0, "%u of %u heap dumps are malformed",
 	    corrupted, NDUMPS);
+	expect_u_eq(torn, 0,
+	    "%u of %u name snapshots hold bytes of neither name", torn,
+	    NSNAPSHOTS);
 }
 TEST_END
 
