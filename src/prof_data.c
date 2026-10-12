@@ -489,7 +489,7 @@ prof_bt_count(void) {
 }
 
 /* Dumps read the name concurrently: store each byte once, final value only. */
-static void
+void
 prof_thread_name_write_tdata(prof_tdata_t *tdata, const char *thread_name) {
 	volatile char *name = tdata->thread_name;
 	unsigned       i;

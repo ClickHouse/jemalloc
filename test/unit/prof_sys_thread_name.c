@@ -24,6 +24,18 @@ test_prof_sys_thread_name_read_clear(char *buf, size_t limit) {
 	return 0;
 }
 
+static const char *published_name;
+static char        name_during_read[PROF_THREAD_NAME_MAX_LEN];
+
+/* Fills the buffer before the final name and records the published name. */
+static int
+test_prof_sys_thread_name_read_poison(char *buf, size_t limit) {
+	memset(buf, 'X', limit - 1);
+	buf[limit - 1] = '\0';
+	strncpy(name_during_read, published_name, sizeof(name_during_read) - 1);
+	return test_prof_sys_thread_name_read(buf, limit);
+}
+
 TEST_BEGIN(test_prof_sys_thread_name) {
 	test_skip_if(!config_prof);
 	test_skip_if(!opt_prof_sys_thread_name);
@@ -63,6 +75,14 @@ TEST_BEGIN(test_prof_sys_thread_name) {
 	    "mallctl read for thread name should not fail");
 	assert_str_eq(thread_name, test_thread_name,
 	    "Thread name should be changed if the system call succeeds");
+
+	published_name = thread_name;
+	name_during_read[0] = '\0';
+	prof_sys_thread_name_read = test_prof_sys_thread_name_read_poison;
+	p = malloc(1);
+	free(p);
+	expect_str_eq(name_during_read, test_thread_name,
+	    "Dumps should only see the old name during the system call");
 
 	prof_sys_thread_name_read = test_prof_sys_thread_name_read_clear;
 	p = malloc(1);
