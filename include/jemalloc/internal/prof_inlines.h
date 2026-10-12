@@ -286,13 +286,6 @@ prof_free(
 	}
 }
 
-JEMALLOC_ALWAYS_INLINE bool
-prof_thread_name_empty(prof_tdata_t *tdata) {
-	prof_active_assert();
-
-	return (tdata->thread_name[0] == '\0');
-}
-
 /* The owner may rename concurrently: read each byte once for a stable copy. */
 JEMALLOC_ALWAYS_INLINE void
 prof_thread_name_snapshot(const prof_tdata_t *tdata, char *buf) {

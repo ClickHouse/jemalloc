@@ -125,31 +125,32 @@ TEST_BEGIN(test_prof_thread_name_threaded) {
 }
 TEST_END
 
-#define DUMP_BUF_SIZE (1u << 20)
-static char   dump_buf[DUMP_BUF_SIZE];
-static size_t dump_len;
+#define NRENAMERS 8
+#define NDUMPS 1000
+static char       dump_buf[1u << 20];
+static size_t     dump_len;
+static atomic_u_t renamers_ready;
+static atomic_b_t renamers_stop;
 
 static int
 prof_dump_open_file_intercept(const char *filename, int mode) {
-	int fd = open("/dev/null", O_WRONLY);
-	assert_d_ne(fd, -1, "Unexpected open() failure");
-	return fd;
+	return open("/dev/null", O_WRONLY);
 }
 
 static ssize_t
 prof_dump_write_file_intercept(int fd, const void *s, size_t len) {
-	assert_zu_lt(dump_len + len, DUMP_BUF_SIZE, "Dump capture overflow");
+	assert_zu_lt(dump_len + len, sizeof(dump_buf), "Dump capture overflow");
 	memcpy(&dump_buf[dump_len], s, len);
 	dump_len += len;
 	return (ssize_t)len;
 }
 
-static atomic_u_t renamers_ready;
-static atomic_b_t renamers_stop;
-
 static void *
 thd_rename_start(void *varg) {
-	const char *names[] = {"aaaaaaaaaaaaaaa", "b"};
+	/* A writer storing the bytes past the NUL would print 'X'. */
+	static const char short_name[PROF_THREAD_NAME_MAX_LEN] =
+	    "b\0XXXXXXXXXXXXX";
+	const char *names[] = {"aaaaaaaaaaaaaaa", short_name};
 	size_t      mib[3];
 	size_t      miblen = sizeof(mib) / sizeof(mib[0]);
 	expect_d_eq(mallctlnametomib("thread.prof.name", mib, &miblen), 0,
@@ -168,7 +169,7 @@ thd_rename_start(void *varg) {
 
 /* The dump is complete and has one well-formed named line per renamer. */
 static bool
-dump_is_intact(unsigned nrenamers) {
+dump_is_intact(void) {
 	if (dump_len == 0 || dump_buf[dump_len - 1] != '\n'
 	    || strstr(dump_buf, "\nMAPPED_LIBRARIES:\n") == NULL) {
 		return false;
@@ -181,36 +182,33 @@ dump_is_intact(unsigned nrenamers) {
 		if (p == NULL) {
 			return false;
 		}
-		if (p + 1 == eol) {
-			continue;
+		if (p + 1 != eol) {
+			size_t n = strspn(p + 2, "ab");
+			if (p[1] != ' ' || n == 0 || p + 2 + n != eol) {
+				return false;
+			}
+			named++;
 		}
-		size_t n = strspn(p + 2, "ab");
-		if (p[1] != ' ' || n == 0 || p + 2 + n != eol) {
-			return false;
-		}
-		named++;
 	}
-	return named == nrenamers;
+	return named == NRENAMERS;
 }
 
 TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
 	test_skip_if(!config_prof);
 	test_skip_if(opt_prof_sys_thread_name);
 
-#define NTHREADS 8
-#define NDUMPS 1000
 	prof_dump_open_file_t  *open_file_orig = prof_dump_open_file;
 	prof_dump_write_file_t *write_file_orig = prof_dump_write_file;
 	prof_dump_open_file = prof_dump_open_file_intercept;
 	prof_dump_write_file = prof_dump_write_file_intercept;
 
-	thd_t thds[NTHREADS];
+	thd_t thds[NRENAMERS];
 	atomic_store_u(&renamers_ready, 0, ATOMIC_RELAXED);
 	atomic_store_b(&renamers_stop, false, ATOMIC_RELAXED);
-	for (unsigned i = 0; i < NTHREADS; i++) {
+	for (unsigned i = 0; i < NRENAMERS; i++) {
 		thd_create(&thds[i], thd_rename_start, NULL);
 	}
-	while (atomic_load_u(&renamers_ready, ATOMIC_ACQUIRE) < NTHREADS) {
+	while (atomic_load_u(&renamers_ready, ATOMIC_ACQUIRE) < NRENAMERS) {
 	}
 
 	const char *filename = "test_filename";
@@ -221,21 +219,17 @@ TEST_BEGIN(test_prof_thread_name_dump_concurrent_rename) {
 		                sizeof(filename)),
 		    0, "Unexpected mallctl failure during prof.dump");
 		dump_buf[dump_len] = '\0';
-		if (!dump_is_intact(NTHREADS)) {
-			corrupted++;
-		}
+		corrupted += !dump_is_intact();
 	}
 
 	atomic_store_b(&renamers_stop, true, ATOMIC_RELEASE);
-	for (unsigned i = 0; i < NTHREADS; i++) {
+	for (unsigned i = 0; i < NRENAMERS; i++) {
 		thd_join(thds[i], NULL);
 	}
 	prof_dump_open_file = open_file_orig;
 	prof_dump_write_file = write_file_orig;
-	expect_u_eq(corrupted, 0, "%u of %u heap dumps lost data", corrupted,
-	    NDUMPS);
-#undef NDUMPS
-#undef NTHREADS
+	expect_u_eq(corrupted, 0, "%u of %u heap dumps are malformed",
+	    corrupted, NDUMPS);
 }
 TEST_END
 

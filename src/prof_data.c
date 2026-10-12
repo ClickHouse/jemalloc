@@ -488,10 +488,18 @@ prof_bt_count(void) {
 	return bt_count;
 }
 
+/* Dumps read the name concurrently: store each byte once, final value only. */
 static void
 prof_thread_name_write_tdata(prof_tdata_t *tdata, const char *thread_name) {
-	strncpy(tdata->thread_name, thread_name, PROF_THREAD_NAME_MAX_LEN);
-	tdata->thread_name[PROF_THREAD_NAME_MAX_LEN - 1] = '\0';
+	volatile char *name = tdata->thread_name;
+	unsigned       i;
+	for (i = 0; i < PROF_THREAD_NAME_MAX_LEN - 1 && thread_name[i] != '\0';
+	     i++) {
+		name[i] = thread_name[i];
+	}
+	for (; i < PROF_THREAD_NAME_MAX_LEN; i++) {
+		name[i] = '\0';
+	}
 }
 
 int
