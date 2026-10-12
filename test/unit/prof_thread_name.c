@@ -126,7 +126,7 @@ TEST_BEGIN(test_prof_thread_name_threaded) {
 TEST_END
 
 #define NRENAMERS 8
-#define NDUMPS 1000
+#define NDUMPS 2000
 static char       dump_buf[1u << 20];
 static size_t     dump_len;
 static atomic_u_t renamers_ready;

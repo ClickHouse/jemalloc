@@ -1295,11 +1295,8 @@ prof_tdata_init_impl(tsd_t *tsd, uint64_t thr_uid, uint64_t thr_discrim,
 	tdata->attached = true;
 	tdata->expired = false;
 	tdata->tctx_uid_next = 0;
-	if (thread_name == NULL) {
-		prof_thread_name_clear(tdata);
-	} else {
-		prof_thread_name_write_tdata(tdata, thread_name);
-	}
+	prof_thread_name_write_tdata(
+	    tdata, thread_name == NULL ? "" : thread_name);
 	prof_thread_name_assert(tdata);
 
 	if (ckh_new(tsd, &tdata->bt2tctx, PROF_CKH_MINITEMS, prof_bt_hash,
