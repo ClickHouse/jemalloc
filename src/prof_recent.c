@@ -6,6 +6,7 @@
 #include "jemalloc/internal/emitter.h"
 #include "jemalloc/internal/prof_data.h"
 #include "jemalloc/internal/prof_recent.h"
+#include "jemalloc/internal/prof_sys.h"
 
 ssize_t            opt_prof_recent_alloc_max = PROF_RECENT_ALLOC_MAX_DEFAULT;
 malloc_mutex_t     prof_recent_alloc_mtx; /* Protects the fields below */
@@ -203,6 +204,10 @@ prof_recent_alloc_reset(tsd_t *tsd, edata_t *edata) {
 		return;
 	}
 
+	/* Sampled allocations refresh the name; frees must do it themselves. */
+	if (opt_prof_sys_thread_name) {
+		prof_sys_thread_name_fetch(tsd);
+	}
 	prof_tctx_t *dalloc_tctx = prof_tctx_create(tsd);
 	/*
 	 * In case dalloc_tctx is NULL, e.g. due to OOM, we will not record the
@@ -226,6 +231,8 @@ prof_recent_alloc_reset(tsd_t *tsd, edata_t *edata) {
 		if (dalloc_tctx != NULL) {
 			nstime_prof_update(&recent->dalloc_time);
 			recent->dalloc_tctx = dalloc_tctx;
+			/* Own tdata: this thread is the only writer of the name. */
+			assert(dalloc_tctx->tdata == prof_tdata_get(tsd, false));
 			strncpy(recent->dalloc_thread_name,
 			    dalloc_tctx->tdata->thread_name,
 			    PROF_THREAD_NAME_MAX_LEN);
@@ -370,6 +377,12 @@ prof_recent_alloc(tsd_t *tsd, edata_t *edata, size_t size, size_t usize) {
 	tail->usize = usize;
 	nstime_copy(&tail->alloc_time, edata_prof_alloc_time_get(edata));
 	tail->alloc_tctx = tctx;
+	/*
+	 * tctx was created by this thread, the only writer of the name.  Its
+	 * tdata may already be detached by a concurrent prof.reset (then
+	 * nothing writes it anymore), so compare by thr_uid, not by pointer.
+	 */
+	assert(tctx->thr_uid == prof_tdata_get(tsd, false)->thr_uid);
 	strncpy(tail->alloc_thread_name, tctx->tdata->thread_name,
 	    PROF_THREAD_NAME_MAX_LEN);
 	nstime_init_zero(&tail->dalloc_time);
