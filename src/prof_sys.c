@@ -727,15 +727,21 @@ typedef struct segment_command segment_command_t;
 #		define LC_SEGMENT_VALUE LC_SEGMENT
 #	endif
 
-static void
-prof_dump_dyld_image_vmaddr(buf_writer_t *buf_writer, uint32_t image_index) {
+/*
+ * Longest "%016llx-%016llx: %s\n" line, excluding the terminating NUL: 36
+ * bytes of fixed text plus a path of at most PATH_MAX bytes.
+ */
+#	define PROF_DUMP_MAPS_ENTRY_MAX (PATH_MAX + 36)
+
+static size_t
+prof_dump_dyld_image_vmaddr(char *buf, uint32_t image_index) {
 	const mach_header_t *header = (const mach_header_t *)
 	    _dyld_get_image_header(image_index);
 	if (header == NULL
 	    || (header->magic != MH_MAGIC_VALUE
 	        && header->magic != MH_CIGAM_VALUE)) {
 		// Invalid header
-		return;
+		return 0;
 	}
 
 	intptr_t             slide = _dyld_get_image_vmaddr_slide(image_index);
@@ -747,37 +753,55 @@ prof_dump_dyld_image_vmaddr(buf_writer_t *buf_writer, uint32_t image_index) {
 			const segment_command_t *segment_cmd =
 			    (const segment_command_t *)load_cmd;
 			if (!strcmp(segment_cmd->segname, "__TEXT")) {
-				char buffer[PATH_MAX + 1];
-				malloc_snprintf(buffer, sizeof(buffer),
+				size_t len = malloc_snprintf(buf,
+				    PROF_DUMP_MAPS_ENTRY_MAX + 1,
 				    "%016llx-%016llx: %s\n",
 				    segment_cmd->vmaddr + slide,
 				    segment_cmd->vmaddr + slide
 				        + segment_cmd->vmsize,
 				    name);
-				buf_writer_cb(buf_writer, buffer);
-				return;
+				return len > PROF_DUMP_MAPS_ENTRY_MAX
+				    ? PROF_DUMP_MAPS_ENTRY_MAX
+				    : len;
 			}
 		}
 		load_cmd = (struct load_command *)((char *)load_cmd
 		    + load_cmd->cmdsize);
 	}
+	return 0;
 }
 
-static void
-prof_dump_dyld_maps(buf_writer_t *buf_writer) {
+/*
+ * libSystem's fork prepare takes dyld's loaders lock before it calls
+ * jemalloc_prefork(), so the dyld image APIs must not be called with
+ * prof_dump_mtx (or any other mutex jemalloc_prefork() takes) held.
+ */
+static char *
+prof_dump_maps_prepare(tsdn_t *tsdn) {
 	uint32_t image_count = _dyld_image_count();
-	for (uint32_t i = 0; i < image_count; i++) {
-		prof_dump_dyld_image_vmaddr(buf_writer, i);
+	size_t   size = (size_t)image_count * PROF_DUMP_MAPS_ENTRY_MAX + 1;
+	char *maps = (char *)iallocztm(tsdn, size, sz_size2index(size), false,
+	    NULL, true, arena_get(tsdn, 0, false), true);
+	if (maps == NULL) {
+		return NULL;
 	}
+	size_t len = 0;
+	for (uint32_t i = 0; i < image_count; i++) {
+		len += prof_dump_dyld_image_vmaddr(maps + len, i);
+	}
+	maps[len] = '\0';
+	return maps;
 }
 
 prof_dump_open_maps_t *JET_MUTABLE prof_dump_open_maps = NULL;
 
 static void
-prof_dump_maps(buf_writer_t *buf_writer) {
+prof_dump_maps(buf_writer_t *buf_writer, const char *maps) {
 	buf_writer_cb(buf_writer, "\nMAPPED_LIBRARIES:\n");
 	/* No proc map file to read on MacOS, dump dyld maps for backtrace. */
-	prof_dump_dyld_maps(buf_writer);
+	if (maps != NULL) {
+		buf_writer_cb(buf_writer, maps);
+	}
 }
 #else /* !__APPLE__ */
 #	ifndef _WIN32
@@ -834,8 +858,13 @@ prof_dump_read_maps_cb(void *read_cbopaque, void *buf, size_t limit) {
 	return malloc_read_fd(mfd, buf, limit);
 }
 
+static char *
+prof_dump_maps_prepare(tsdn_t *UNUSED tsdn) {
+	return NULL;
+}
+
 static void
-prof_dump_maps(buf_writer_t *buf_writer) {
+prof_dump_maps(buf_writer_t *buf_writer, const char *UNUSED maps) {
 	int mfd = prof_dump_open_maps();
 	if (mfd == -1) {
 		return;
@@ -846,6 +875,13 @@ prof_dump_maps(buf_writer_t *buf_writer) {
 	close(mfd);
 }
 #endif /* __APPLE__ */
+
+static void
+prof_dump_maps_release(tsdn_t *tsdn, char *maps) {
+	if (maps != NULL) {
+		idalloctm(tsdn, maps, NULL, NULL, true, true);
+	}
+}
 
 static bool
 prof_dump(
@@ -862,6 +898,7 @@ prof_dump(
 	    /* error */ false, /* prof_dump_fd */ -1};
 
 	pre_reentrancy(tsd, NULL);
+	char *maps = prof_dump_maps_prepare(tsd_tsdn(tsd));
 	malloc_mutex_lock(tsd_tsdn(tsd), &prof_dump_mtx);
 
 	prof_dump_open(&arg, filename);
@@ -870,7 +907,7 @@ prof_dump(
 	    &arg, prof_dump_buf, PROF_DUMP_BUFSIZE);
 	assert(!err);
 	prof_dump_impl(tsd, buf_writer_cb, &buf_writer, tdata, leakcheck);
-	prof_dump_maps(&buf_writer);
+	prof_dump_maps(&buf_writer, maps);
 	buf_writer_terminate(tsd_tsdn(tsd), &buf_writer);
 	prof_dump_close(&arg);
 
@@ -879,6 +916,7 @@ prof_dump(
 		dump_hook(filename);
 	}
 	malloc_mutex_unlock(tsd_tsdn(tsd), &prof_dump_mtx);
+	prof_dump_maps_release(tsd_tsdn(tsd), maps);
 	post_reentrancy(tsd);
 
 	return arg.error;
