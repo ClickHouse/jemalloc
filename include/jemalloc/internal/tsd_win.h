@@ -5,6 +5,7 @@
 
 #include "jemalloc/internal/jemalloc_preamble.h"
 #include "jemalloc/internal/tsd_internals.h"
+#include "jemalloc/internal/tsd_tls_addr.h"
 #include "jemalloc/internal/tsd_types.h"
 
 /* val should always be the first field of tsd_wrapper_t since accessing
@@ -179,9 +180,6 @@ extern JEMALLOC_TSD_TYPE_ATTR(tsd_wrapper_t) tsd_wrapper_tls;
 extern bool tsd_booted;
 
 JEMALLOC_TLS_ADDR_DECLARE(tsd_wrapper_tls)
-#ifdef JEMALLOC_TSD_C_
-JEMALLOC_TLS_ADDR_DEFINE(tsd_wrapper_tls)
-#endif
 
 /* Initialization/cleanup. */
 JEMALLOC_ALWAYS_INLINE bool

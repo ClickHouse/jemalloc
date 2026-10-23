@@ -5,6 +5,7 @@
 
 #include "jemalloc/internal/jemalloc_preamble.h"
 #include "jemalloc/internal/tsd_internals.h"
+#include "jemalloc/internal/tsd_tls_addr.h"
 #include "jemalloc/internal/tsd_types.h"
 
 #define JEMALLOC_TSD_TYPE_ATTR(type) __thread type JEMALLOC_TLS_MODEL
@@ -14,9 +15,6 @@ extern pthread_key_t tsd_tsd;
 extern bool          tsd_booted;
 
 JEMALLOC_TLS_ADDR_DECLARE(tsd_tls)
-#ifdef JEMALLOC_TSD_C_
-JEMALLOC_TLS_ADDR_DEFINE(tsd_tls)
-#endif
 
 /* Initialization/cleanup. */
 JEMALLOC_ALWAYS_INLINE bool

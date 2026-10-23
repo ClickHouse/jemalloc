@@ -2,17 +2,19 @@
  * Regression test for issue #2890: under whole-program LTO the inlined allocator
  * fastpath caches the TLS-derived tcache base in a register across a
  * swapcontext, so a fiber resumed on another OS thread uses the previous
- * thread's tcache -> heap corruption.  See JEMALLOC_TLS_ADDR in tsd_internals.h.
+ * thread's tcache -> heap corruption.  See JEMALLOC_TLS_ADDR in tsd_tls_addr.h.
  *
- * Standalone (no test harness, so it can be static-linked), calling jemalloc via
- * JEMALLOC_MANGLE -- it rewrites malloc/free to jemalloc's configured-prefix
- * symbols, so the calls bind to and inline the static allocator, not libc's
- * wrappers.  Reproduces only with the allocator inlined next to the swapcontext
- * (a static --whole-archive link plus whole-program LTO), so the Makefile builds
- * it only when -flto is in the build flags.
+ * Standalone build:
+ *
+ *   clang -O2 -flto=thin -fuse-ld=lld -D_GNU_SOURCE -D_REENTRANT -DJEMALLOC_NO_PRIVATE_NAMESPACE \
+ *         -Itest/include -Iinclude \
+ *         $(find src -name '*.c' | grep -v zone.c) \
+ *         test/integration/tcache_fiber_migration.c -pthread -lm \
+ *         -o tcache_fiber_migration
  */
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <ucontext.h>
 
 #define JEMALLOC_MANGLE
@@ -23,7 +25,8 @@ enum {
 	num_workers = 8,
 	ops_per_fiber = 20 * 1000,
 	fiber_stack_size = 1 << 16,
-	ready_queue_capacity = 512 /* power of two, > num_fibers */
+	/* Power of two; a fiber sits in at most one queue at a time. */
+	worker_queue_capacity = num_fibers
 };
 
 static ucontext_t fiber_context[num_fibers];
@@ -33,28 +36,35 @@ static ucontext_t *return_context[num_fibers];
 static unsigned fiber_remaining_ops[num_fibers];
 static bool fiber_done[num_fibers];
 
-static unsigned ready_queue[ready_queue_capacity];
-static unsigned ready_queue_head;
-static unsigned ready_queue_tail;
+/*
+ * Per-worker ready queues: a fiber that yields on worker w is enqueued to
+ * worker (w + 1) % num_workers and can only be resumed there, so every resume
+ * is a cross-thread migration by construction.
+ */
+static unsigned ready_queue[num_workers][worker_queue_capacity];
+static unsigned ready_queue_head[num_workers];
+static unsigned ready_queue_tail[num_workers];
 static unsigned live_fibers;
 static pthread_mutex_t queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static void
-push_ready_fiber(unsigned id) {
+push_ready_fiber(unsigned worker, unsigned id) {
 	pthread_mutex_lock(&queue_mtx);
-	ready_queue[ready_queue_head++ & (ready_queue_capacity - 1)] = id;
+	ready_queue[worker][ready_queue_head[worker]++ &
+	    (worker_queue_capacity - 1)] = id;
 	pthread_mutex_unlock(&queue_mtx);
 }
 
 /* Returns a ready fiber id, -1 if none ready now, or -2 if all have finished. */
 static int
-pop_ready_fiber(void) {
+pop_ready_fiber(unsigned worker) {
 	int id;
 	pthread_mutex_lock(&queue_mtx);
 	if (live_fibers == 0) {
 		id = -2;
-	} else if (ready_queue_tail != ready_queue_head) {
-		id = (int)ready_queue[ready_queue_tail++ & (ready_queue_capacity - 1)];
+	} else if (ready_queue_tail[worker] != ready_queue_head[worker]) {
+		id = (int)ready_queue[worker][ready_queue_tail[worker]++ &
+		    (worker_queue_capacity - 1)];
 	} else {
 		id = -1;
 	}
@@ -68,7 +78,7 @@ fiber_run(int id) {
 	while (fiber_remaining_ops[id] > 0) {
 		fiber_remaining_ops[id]--;
 		free(p); /* push to the CURRENT thread's tcache */
-		/* Yield; may be resumed on a different worker thread. */
+		/* Yield; resumed on the next worker thread (forced migration). */
 		swapcontext(&fiber_context[id], return_context[id]);
 		p = malloc(64); /* pop; must come from the NEW thread's tcache */
 		*(char *)p = (char)id;
@@ -83,10 +93,10 @@ fiber_run(int id) {
 
 static void *
 worker_thread(void *arg) {
+	unsigned worker = (unsigned)(uintptr_t)arg;
 	ucontext_t scheduler_context;
-	(void)arg;
 	for (;;) {
-		int id = pop_ready_fiber();
+		int id = pop_ready_fiber(worker);
 		if (id == -2) {
 			break;
 		}
@@ -96,7 +106,9 @@ worker_thread(void *arg) {
 		return_context[id] = &scheduler_context;
 		swapcontext(&scheduler_context, &fiber_context[id]);
 		if (!fiber_done[id]) {
-			push_ready_fiber((unsigned)id);
+			/* Hand off to the next worker: forced migration. */
+			push_ready_fiber((worker + 1) % num_workers,
+			    (unsigned)id);
 		}
 	}
 	return NULL;
@@ -117,11 +129,12 @@ main(void) {
 		fiber_context[i].uc_stack.ss_size = fiber_stack_size;
 		fiber_context[i].uc_link = NULL;
 		makecontext(&fiber_context[i], (void (*)(void))fiber_run, 1, (int)i);
-		push_ready_fiber(i);
+		push_ready_fiber(i % num_workers, i);
 	}
 
 	for (i = 0; i < num_workers; i++) {
-		pthread_create(&threads[i], NULL, worker_thread, NULL);
+		pthread_create(&threads[i], NULL, worker_thread,
+		    (void *)(uintptr_t)i);
 	}
 	for (i = 0; i < num_workers; i++) {
 		pthread_join(threads[i], NULL);
@@ -131,5 +144,5 @@ main(void) {
 	}
 
 	/* Completing without a tcache-corruption crash is success. */
-	return live_fibers == 0 ? 0 : 1;
+	return live_fibers == 0 ? 0 : 2;
 }

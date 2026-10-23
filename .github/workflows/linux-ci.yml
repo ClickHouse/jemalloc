@@ -692,7 +692,7 @@ jobs:
         make check
 
 
-  test-linux-lto:
+  test-linux-lto-fiber-safe-tls:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
@@ -702,11 +702,12 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y clang lld llvm
 
-    - name: Build and test (whole-program ThinLTO, je_ prefix)
+    - name: Build and test (LTO, je_ prefix, fiber-safe TLS)
       run: |
         autoconf
         CC=clang AR=llvm-ar NM=llvm-nm RANLIB=llvm-ranlib \
-          ./configure --with-jemalloc-prefix=je_ EXTRA_CFLAGS=-flto=thin
+          ./configure --enable-experimental-fiber-safe-tls \
+            --with-jemalloc-prefix=je_ EXTRA_CFLAGS=-flto=thin
         make -j3 EXTRA_LDFLAGS="-flto=thin -fuse-ld=lld"
         make -j3 tests EXTRA_LDFLAGS="-flto=thin -fuse-ld=lld"
         make check
