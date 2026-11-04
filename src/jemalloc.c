@@ -772,6 +772,29 @@ malloc_ncpus(void) {
 	return ((result == -1) ? 1 : (unsigned)result);
 }
 
+/* Highest CPU id in the affinity mask, or -1 if unknown. */
+static int
+malloc_cpu_max_affinity_id(void) {
+#if !defined(_WIN32) && defined(CPU_COUNT)
+#	if defined(__FreeBSD__) || defined(__DragonFly__)
+	cpuset_t set;
+#	else
+	cpu_set_t set;
+#	endif
+#	if defined(JEMALLOC_HAVE_SCHED_SETAFFINITY)
+	sched_getaffinity(0, sizeof(set), &set);
+#	else
+	pthread_getaffinity_np(pthread_self(), sizeof(set), &set);
+#	endif
+	for (int i = (int)(sizeof(set) * 8); i-- > 0;) {
+		if (CPU_ISSET(i, &set)) {
+			return i;
+		}
+	}
+#endif
+	return -1;
+}
+
 /*
  * Bound on sched_getcpu() ids (nr_cpu_ids on Linux).  Fixed at boot, unlike
  * the affinity mask or the online set.  Returns 0 if unknown.
@@ -859,6 +882,14 @@ malloc_cpu_count_is_deterministic(void) {
 #		endif /* JEMALLOC_HAVE_SCHED_SETAFFINITY */
 	long cpu_affinity = CPU_COUNT(&set);
 	if (cpu_affinity != cpu_conf) {
+		return false;
+	}
+	/*
+	 * Matching counts are not enough: sched_getcpu() returns raw ids, so a
+	 * holey or offset mask (e.g. cpuset {4} with masked sysfs) still
+	 * breaks percpu indexing.
+	 */
+	if (malloc_cpu_max_affinity_id() + 1 != cpu_affinity) {
 		return false;
 	}
 #	endif         /* CPU_COUNT */
@@ -1064,9 +1095,12 @@ malloc_init_hard_recursible(void) {
 		 * sched_getcpu() regardless of the affinity mask, so a
 		 * non-deterministic CPU count is harmless.
 		 */
+		int max_affinity_id = malloc_cpu_max_affinity_id();
 		bool percpu_safe = (opt_percpu_arena == percpu_arena_uninit
 		    || opt_percpu_arena == percpu_arena)
-		    && ncpus_possible >= ncpus;
+		    && ncpus_possible >= ncpus
+		    && max_affinity_id >= 0
+		    && (unsigned)max_affinity_id < ncpus_possible;
 		if (!cpu_count_is_deterministic && !percpu_safe) {
 			/*
 			 * If # of CPU is not deterministic, and narenas not
