@@ -84,6 +84,14 @@ percpu_arena_ind_limit(percpu_arena_mode_t mode) {
 		}
 		return ncpus / 2;
 	} else {
+		/*
+		 * Cover every possible CPU id, not just the affinity mask:
+		 * arenas are indexed by raw sched_getcpu().  Unused slots are
+		 * never initialized.
+		 */
+		if (mode == percpu_arena && ncpus_possible > ncpus) {
+			return ncpus_possible;
+		}
 		return ncpus;
 	}
 }

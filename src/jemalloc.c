@@ -170,6 +170,7 @@ unsigned     opt_narenas = 0;
 fxp_t opt_narenas_ratio = FXP_INIT_INT(4);
 
 unsigned ncpus;
+unsigned ncpus_possible;
 
 unsigned opt_debug_double_free_max_scan =
     SAFETY_CHECK_DOUBLE_FREE_MAX_SCAN_DEFAULT;
@@ -772,6 +773,63 @@ malloc_ncpus(void) {
 }
 
 /*
+ * Bound on sched_getcpu() ids (nr_cpu_ids on Linux).  Fixed at boot, unlike
+ * the affinity mask or the online set.  Returns 0 if unknown.
+ */
+static unsigned
+malloc_ncpus_possible(void) {
+#ifdef __linux__
+	char buf[64];
+	int fd;
+
+#if defined(O_CLOEXEC)
+	fd = malloc_open("/sys/devices/system/cpu/possible",
+	    O_RDONLY | O_CLOEXEC);
+#else
+	fd = malloc_open("/sys/devices/system/cpu/possible", O_RDONLY);
+	if (fd != -1) {
+		fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+	}
+#endif
+	if (fd == -1) {
+		return 0;
+	}
+	ssize_t nread = malloc_read_fd(fd, buf, sizeof(buf) - 1);
+	malloc_close(fd);
+	/* Full buffer: possibly truncated mid-number. */
+	if (nread <= 0 || nread == (ssize_t)(sizeof(buf) - 1)) {
+		return 0;
+	}
+
+	/* Range list, e.g. "0-63\n"; use max id + 1, the set may have holes. */
+	unsigned max_id = 0;
+	unsigned cur = 0;
+	bool seen_digit = false;
+	for (ssize_t i = 0; i < nread; i++) {
+		if (buf[i] >= '0' && buf[i] <= '9') {
+			cur = cur * 10 + (unsigned)(buf[i] - '0');
+			seen_digit = true;
+		} else {
+			if (seen_digit && cur > max_id) {
+				max_id = cur;
+			}
+			cur = 0;
+			seen_digit = false;
+		}
+	}
+	if (seen_digit && cur > max_id) {
+		max_id = cur;
+	}
+	if (max_id + 1 >= MALLOCX_ARENA_LIMIT) {
+		return 0;
+	}
+	return max_id + 1;
+#else
+	return 0;
+#endif
+}
+
+/*
  * Ensure that number of CPUs is determistinc, i.e. it is the same based on:
  * - sched_getaffinity()
  * - _SC_NPROCESSORS_ONLN
@@ -997,10 +1055,19 @@ malloc_init_hard_recursible(void) {
 	malloc_init_state = malloc_init_recursible;
 
 	ncpus = malloc_ncpus();
+	ncpus_possible = malloc_ncpus_possible();
 	if (opt_percpu_arena != percpu_arena_disabled) {
 		bool cpu_count_is_deterministic =
 		    malloc_cpu_count_is_deterministic();
-		if (!cpu_count_is_deterministic) {
+		/*
+		 * percpu mode sizes arenas by ncpus_possible, which bounds
+		 * sched_getcpu() regardless of the affinity mask, so a
+		 * non-deterministic CPU count is harmless.
+		 */
+		bool percpu_safe = (opt_percpu_arena == percpu_arena_uninit
+		    || opt_percpu_arena == percpu_arena)
+		    && ncpus_possible >= ncpus;
+		if (!cpu_count_is_deterministic && !percpu_safe) {
 			/*
 			 * If # of CPU is not deterministic, and narenas not
 			 * specified, disables per cpu arena since it may not
