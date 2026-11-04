@@ -535,7 +535,7 @@ arena_choose_hard(tsd_t *tsd, bool internal) {
 	arena_t *ret JEMALLOC_CC_SILENCE_INIT(NULL);
 
 	if (have_percpu_arena && PERCPU_ARENA_ENABLED(opt_percpu_arena)) {
-		unsigned choose = percpu_arena_choose();
+		unsigned choose = percpu_arena_choose_clamped();
 		ret = arena_get(tsd_tsdn(tsd), choose, true);
 		assert(ret != NULL);
 		arena_bind(tsd, arena_ind_get(ret), false);
@@ -844,6 +844,12 @@ malloc_ncpus_possible(void) {
 		max_id = cur;
 	}
 	if (max_id + 1 >= MALLOCX_ARENA_LIMIT) {
+		return 0;
+	}
+	/* online <= possible on a real kernel; a smaller bound means the file
+	 * is masked (e.g. by a container) and cannot be trusted. */
+	long cpu_onln = sysconf(_SC_NPROCESSORS_ONLN);
+	if (cpu_onln > 0 && max_id + 1 < (unsigned)cpu_onln) {
 		return 0;
 	}
 	return max_id + 1;
