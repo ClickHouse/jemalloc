@@ -2306,7 +2306,8 @@ thread_arena_ctl(tsd_t *tsd, const size_t *mib, size_t miblen, void *oldp,
 				 * reclaimed by percpu (see arena_choose_impl),
 				 * so without this it would stay pinned forever.
 				 */
-				percpu_arena_update(tsd, percpu_arena_choose());
+				percpu_arena_update(tsd,
+				    percpu_arena_choose_clamped());
 				ret = 0;
 				goto label_return;
 			}
