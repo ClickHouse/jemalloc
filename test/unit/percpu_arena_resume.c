@@ -1,5 +1,9 @@
 #include "test/jemalloc_test.h"
 
+#ifdef JEMALLOC_HAVE_SCHED_SETAFFINITY
+#include <sched.h>
+#endif
+
 /*
  * Under percpu_arena, binding a thread to a manual arena (an index at or above
  * the per-CPU auto range) is one-way: percpu never reclaims it (see
@@ -74,8 +78,61 @@ TEST_BEGIN(test_thread_arena_resume_percpu) {
 }
 TEST_END
 
+/*
+ * Resuming per-CPU selection while running on a CPU id at or above the
+ * reserved arena range (possible only with a masked/lying cpu/possible file)
+ * must clamp, not index past the range.
+ */
+TEST_BEGIN(test_thread_arena_resume_percpu_clamped) {
+	test_skip_if(!have_percpu_arena
+	    || !PERCPU_ARENA_ENABLED(opt_percpu_arena));
+#ifdef JEMALLOC_HAVE_SCHED_SETAFFINITY
+	cpu_set_t old_set;
+	expect_d_eq(sched_getaffinity(0, sizeof(old_set), &old_set), 0,
+	    "Unexpected sched_getaffinity() failure");
+	/* Pin to a CPU id above the shrunken range below, so the raw index
+	 * differs from the clamped one. */
+	int cpu = -1;
+	for (int i = (int)(sizeof(old_set) * 8); i-- > 1;) {
+		if (CPU_ISSET(i, &old_set)) {
+			cpu = i;
+			break;
+		}
+	}
+	test_skip_if(cpu < 0);
+	cpu_set_t set;
+	CPU_ZERO(&set);
+	CPU_SET(cpu, &set);
+	expect_d_eq(sched_setaffinity(0, sizeof(set), &set), 0,
+	    "Unexpected sched_setaffinity() failure");
+
+	/* Pretend the reserved per-CPU range is a single arena. */
+	unsigned ncpus_old = ncpus;
+	unsigned ncpus_possible_old = ncpus_possible;
+	ncpus = 1;
+	ncpus_possible = 1;
+
+	unsigned resume = 0;
+	expect_d_eq(mallctl("thread.arena", NULL, NULL, (void *)&resume,
+	    sizeof(resume)), 0, "Should resume per-CPU selection, not fail");
+	unsigned cur;
+	size_t sz = sizeof(cur);
+	expect_d_eq(mallctl("thread.arena", (void *)&cur, &sz, NULL, 0), 0,
+	    "Unexpected mallctl() failure");
+	expect_u_eq(cur, 0, "CPU id above the range must be clamped");
+
+	ncpus = ncpus_old;
+	ncpus_possible = ncpus_possible_old;
+	sched_setaffinity(0, sizeof(old_set), &old_set);
+#else
+	test_skip("sched_setaffinity() not available");
+#endif
+}
+TEST_END
+
 int
 main(void) {
 	return test(
-	    test_thread_arena_resume_percpu);
+	    test_thread_arena_resume_percpu,
+	    test_thread_arena_resume_percpu_clamped);
 }

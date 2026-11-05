@@ -170,6 +170,7 @@ unsigned     opt_narenas = 0;
 fxp_t opt_narenas_ratio = FXP_INIT_INT(4);
 
 unsigned ncpus;
+unsigned ncpus_possible;
 
 unsigned opt_debug_double_free_max_scan =
     SAFETY_CHECK_DOUBLE_FREE_MAX_SCAN_DEFAULT;
@@ -534,7 +535,7 @@ arena_choose_hard(tsd_t *tsd, bool internal) {
 	arena_t *ret JEMALLOC_CC_SILENCE_INIT(NULL);
 
 	if (have_percpu_arena && PERCPU_ARENA_ENABLED(opt_percpu_arena)) {
-		unsigned choose = percpu_arena_choose();
+		unsigned choose = percpu_arena_choose_clamped();
 		ret = arena_get(tsd_tsdn(tsd), choose, true);
 		assert(ret != NULL);
 		arena_bind(tsd, arena_ind_get(ret), false);
@@ -771,6 +772,92 @@ malloc_ncpus(void) {
 	return ((result == -1) ? 1 : (unsigned)result);
 }
 
+/* Highest CPU id in the affinity mask, or -1 if unknown. */
+static int
+malloc_cpu_max_affinity_id(void) {
+#if !defined(_WIN32) && defined(CPU_COUNT)
+#	if defined(__FreeBSD__) || defined(__DragonFly__)
+	cpuset_t set;
+#	else
+	cpu_set_t set;
+#	endif
+#	if defined(JEMALLOC_HAVE_SCHED_SETAFFINITY)
+	sched_getaffinity(0, sizeof(set), &set);
+#	else
+	pthread_getaffinity_np(pthread_self(), sizeof(set), &set);
+#	endif
+	for (int i = (int)(sizeof(set) * 8); i-- > 0;) {
+		if (CPU_ISSET(i, &set)) {
+			return i;
+		}
+	}
+#endif
+	return -1;
+}
+
+/*
+ * Bound on sched_getcpu() ids (nr_cpu_ids on Linux).  Fixed at boot, unlike
+ * the affinity mask or the online set.  Returns 0 if unknown.
+ */
+static unsigned
+malloc_ncpus_possible(void) {
+#ifdef __linux__
+	char buf[64];
+	int fd;
+
+#if defined(O_CLOEXEC)
+	fd = malloc_open("/sys/devices/system/cpu/possible",
+	    O_RDONLY | O_CLOEXEC);
+#else
+	fd = malloc_open("/sys/devices/system/cpu/possible", O_RDONLY);
+	if (fd != -1) {
+		fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
+	}
+#endif
+	if (fd == -1) {
+		return 0;
+	}
+	ssize_t nread = malloc_read_fd(fd, buf, sizeof(buf) - 1);
+	malloc_close(fd);
+	/* Full buffer: possibly truncated mid-number. */
+	if (nread <= 0 || nread == (ssize_t)(sizeof(buf) - 1)) {
+		return 0;
+	}
+
+	/* Range list, e.g. "0-63\n"; use max id + 1, the set may have holes. */
+	unsigned max_id = 0;
+	unsigned cur = 0;
+	bool seen_digit = false;
+	for (ssize_t i = 0; i < nread; i++) {
+		if (buf[i] >= '0' && buf[i] <= '9') {
+			cur = cur * 10 + (unsigned)(buf[i] - '0');
+			seen_digit = true;
+		} else {
+			if (seen_digit && cur > max_id) {
+				max_id = cur;
+			}
+			cur = 0;
+			seen_digit = false;
+		}
+	}
+	if (seen_digit && cur > max_id) {
+		max_id = cur;
+	}
+	if (max_id + 1 >= MALLOCX_ARENA_LIMIT) {
+		return 0;
+	}
+	/* online <= possible on a real kernel; a smaller bound means the file
+	 * is masked (e.g. by a container) and cannot be trusted. */
+	long cpu_onln = sysconf(_SC_NPROCESSORS_ONLN);
+	if (cpu_onln > 0 && max_id + 1 < (unsigned)cpu_onln) {
+		return 0;
+	}
+	return max_id + 1;
+#else
+	return 0;
+#endif
+}
+
 /*
  * Ensure that number of CPUs is determistinc, i.e. it is the same based on:
  * - sched_getaffinity()
@@ -801,6 +888,14 @@ malloc_cpu_count_is_deterministic(void) {
 #		endif /* JEMALLOC_HAVE_SCHED_SETAFFINITY */
 	long cpu_affinity = CPU_COUNT(&set);
 	if (cpu_affinity != cpu_conf) {
+		return false;
+	}
+	/*
+	 * Matching counts are not enough: sched_getcpu() returns raw ids, so a
+	 * holey or offset mask (e.g. cpuset {4} with masked sysfs) still
+	 * breaks percpu indexing.
+	 */
+	if (malloc_cpu_max_affinity_id() + 1 != cpu_affinity) {
 		return false;
 	}
 #	endif         /* CPU_COUNT */
@@ -997,10 +1092,22 @@ malloc_init_hard_recursible(void) {
 	malloc_init_state = malloc_init_recursible;
 
 	ncpus = malloc_ncpus();
+	ncpus_possible = malloc_ncpus_possible();
 	if (opt_percpu_arena != percpu_arena_disabled) {
 		bool cpu_count_is_deterministic =
 		    malloc_cpu_count_is_deterministic();
-		if (!cpu_count_is_deterministic) {
+		/*
+		 * percpu mode sizes arenas by ncpus_possible, which bounds
+		 * sched_getcpu() regardless of the affinity mask, so a
+		 * non-deterministic CPU count is harmless.
+		 */
+		int max_affinity_id = malloc_cpu_max_affinity_id();
+		bool percpu_safe = (opt_percpu_arena == percpu_arena_uninit
+		    || opt_percpu_arena == percpu_arena)
+		    && ncpus_possible >= ncpus
+		    && max_affinity_id >= 0
+		    && (unsigned)max_affinity_id < ncpus_possible;
+		if (!cpu_count_is_deterministic && !percpu_safe) {
 			/*
 			 * If # of CPU is not deterministic, and narenas not
 			 * specified, disables per cpu arena since it may not

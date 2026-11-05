@@ -54,6 +54,9 @@ extern uintptr_t san_cache_bin_nonfast_mask;
 /* Number of CPUs. */
 extern unsigned ncpus;
 
+/* Bound on sched_getcpu() ids (nr_cpu_ids on Linux); 0 if unknown. */
+extern unsigned ncpus_possible;
+
 /* Number of arenas used for automatic multiplexing of threads and arenas. */
 extern unsigned narenas_auto;
 

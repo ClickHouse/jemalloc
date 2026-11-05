@@ -75,7 +75,7 @@ arena_choose_impl(tsd_t *tsd, arena_t *arena, bool internal) {
 	    && !internal
 	    && (arena_ind_get(ret) < percpu_arena_ind_limit(opt_percpu_arena))
 	    && (ret->last_thd != tsd_tsdn(tsd))) {
-		unsigned ind = percpu_arena_choose();
+		unsigned ind = percpu_arena_choose_clamped();
 		if (arena_ind_get(ret) != ind) {
 			percpu_arena_update(tsd, ind);
 			ret = tsd_arena_get(tsd);

@@ -84,8 +84,31 @@ percpu_arena_ind_limit(percpu_arena_mode_t mode) {
 		}
 		return ncpus / 2;
 	} else {
+		/*
+		 * Cover every possible CPU id, not just the affinity mask:
+		 * arenas are indexed by raw sched_getcpu().  Unused slots are
+		 * never initialized.
+		 */
+		if (mode == percpu_arena && ncpus_possible > ncpus) {
+			return ncpus_possible;
+		}
 		return ncpus;
 	}
+}
+
+/*
+ * As percpu_arena_choose(), but clamped: the affinity mask can grow past a
+ * masked (lying) cpu/possible file, so wrap instead of indexing past the
+ * reserved arena range.
+ */
+JEMALLOC_ALWAYS_INLINE unsigned
+percpu_arena_choose_clamped(void) {
+	unsigned arena_ind = percpu_arena_choose();
+	unsigned ind_limit = percpu_arena_ind_limit(opt_percpu_arena);
+	if (unlikely(arena_ind >= ind_limit)) {
+		arena_ind %= ind_limit;
+	}
+	return arena_ind;
 }
 
 static inline arena_t *
