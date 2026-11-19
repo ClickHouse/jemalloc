@@ -14,8 +14,13 @@
 /*
  * When the amount of pages to be purged exceeds this amount, deferred purge
  * should happen.
+ *
+ * The threshold is 64 MiB whatever the page size is: 1024 pages used to mean
+ * 4 MiB with 4 KiB pages but 64 MiB with 64 KiB pages, so the same amount of
+ * dirty memory was purged on schedule with the former and left alone for a
+ * whole decay period with the latter.
  */
-#define ARENA_DEFERRED_PURGE_NPAGES_THRESHOLD UINT64_C(1024)
+#define ARENA_DEFERRED_PURGE_NPAGES_THRESHOLD ((UINT64_C(64) << 20) >> LG_PAGE)
 
 extern ssize_t opt_dirty_decay_ms;
 extern ssize_t opt_muzzy_decay_ms;
