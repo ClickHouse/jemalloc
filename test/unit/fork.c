@@ -135,7 +135,95 @@ TEST_BEGIN(test_fork_multithreaded) {
 }
 TEST_END
 
+TEST_BEGIN(test_fork_explicit_tcache) {
+#ifndef _WIN32
+	test_skip_if(!config_stats);
+
+	/*
+	 * An explicit tcache is linked into the creating thread's internal
+	 * arena; move the thread's own tcache there so both share one list.
+	 */
+	unsigned iarena_ind = arena_ind_get(arena_ichoose(tsd_fetch(), NULL));
+	expect_d_eq(mallctl("thread.arena", NULL, NULL, (void *)&iarena_ind,
+	                sizeof(iarena_ind)),
+	    0, "Unexpected mallctl() failure");
+
+	unsigned tc;
+	size_t   sz = sizeof(tc);
+	expect_d_eq(mallctl("tcache.create", (void *)&tc, &sz, NULL, 0), 0,
+	    "Unexpected mallctl() failure");
+	void *p = mallocx(1, MALLOCX_TCACHE(tc));
+	expect_ptr_not_null(p, "Unexpected mallocx() failure");
+	dallocx(p, MALLOCX_TCACHE(tc));
+
+	pid_t pid = fork();
+	if (pid == -1) {
+		test_fail("Unexpected fork() failure");
+	} else if (pid == 0) {
+		/* Child. */
+		tsd_t         *tsd = tsd_fetch();
+		tcache_slow_t *tcache_slow = tcaches[tc].tcache->tcache_slow;
+		arena_t       *arena = tcache_slow->arena;
+		bool           in_ql = false;
+		tcache_slow_t *iter;
+		malloc_mutex_lock(tsd_tsdn(tsd), &arena->tcache_ql_mtx);
+		ql_foreach (iter, &arena->tcache_ql, link) {
+			if (iter == tcache_slow) {
+				in_ql = true;
+				break;
+			}
+		}
+		malloc_mutex_unlock(tsd_tsdn(tsd), &arena->tcache_ql_mtx);
+		if (!in_ql) {
+			_exit(1);
+		}
+
+		if (mallctl("tcache.destroy", NULL, NULL, (void *)&tc,
+		        sizeof(tc))
+		    != 0) {
+			_exit(2);
+		}
+
+		/* The calling thread's own tcache must stay well linked. */
+		if (tsd_tcache_enabled_get(tsd)) {
+			tcache_slow_t *own = tsd_tcache_slowp_get(tsd);
+			if (qr_next(own, link) == tcache_slow
+			    || qr_prev(own, link) == tcache_slow
+			    || qr_next(qr_prev(own, link), link) != own
+			    || qr_prev(qr_next(own, link), link) != own) {
+				_exit(3);
+			}
+		}
+
+		/* Reassociate it, which unlinks it from the old arena. */
+		unsigned arena_ind;
+		sz = sizeof(arena_ind);
+		if (mallctl("arenas.create", (void *)&arena_ind, &sz, NULL, 0)
+		    != 0) {
+			_exit(4);
+		}
+		if (mallctl("thread.arena", NULL, NULL, (void *)&arena_ind,
+		        sizeof(arena_ind))
+		    != 0) {
+			_exit(5);
+		}
+		void *q = malloc(1);
+		if (q == NULL) {
+			_exit(6);
+		}
+		free(q);
+		_exit(0);
+	} else {
+		wait_for_child_exit(pid);
+	}
+#else
+	test_skip("fork(2) is irrelevant to Windows");
+#endif
+}
+TEST_END
+
 int
 main(void) {
-	return test_no_reentrancy(test_fork, test_fork_multithreaded);
+	return test_no_reentrancy(
+	    test_fork, test_fork_multithreaded, test_fork_explicit_tcache);
 }

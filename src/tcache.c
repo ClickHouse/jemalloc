@@ -1451,6 +1451,27 @@ tcache_postfork_parent(tsdn_t *tsdn) {
 void
 tcache_postfork_child(tsdn_t *tsdn) {
 	malloc_mutex_postfork_child(tsdn, &tcaches_mtx);
+	if (!config_stats || tcaches == NULL) {
+		return;
+	}
+	/*
+	 * Explicit tcaches survive fork, but arena_postfork_child() rebuilt the
+	 * arena tcache lists with only the calling thread's tcache.  A free
+	 * tcaches slot holds NULL or a pointer into tcaches instead.
+	 */
+	for (unsigned i = 0; i < tcaches_past; i++) {
+		tcache_t *tcache = tcaches[i].tcache;
+		if (tcache == NULL || tcache == TCACHES_ELM_NEED_REINIT
+		    || ((uintptr_t)tcache >= (uintptr_t)tcaches
+		        && (uintptr_t)tcache
+		            < (uintptr_t)&tcaches[MALLOCX_TCACHE_MAX + 1])) {
+			continue;
+		}
+		tcache_slow_t *tcache_slow = tcache->tcache_slow;
+		arena_t       *arena = tcache_slow->arena;
+		tcache_slow->arena = NULL;
+		tcache_arena_associate(tsdn, tcache_slow, tcache, arena);
+	}
 }
 
 void
